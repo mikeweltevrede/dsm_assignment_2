@@ -1,0 +1,147 @@
+---
+title: "Data Science Methods - Assignment 2"
+author: "Steffie van Poppel, Robbie Reyerse, Mike Weltevrede (Group 20)"
+date: "March 21, 2020"
+header-includes:
+   - \usepackage{booktabs}
+   - \usepackage{arydshln}
+   - \usepackage{float}
+   - \usepackage{caption}
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+library(glmnet)
+library(pROC)
+library(knitr)
+```
+
+# Assignment 1
+Here is the table
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{lccccccc}
+    \toprule
+    \multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Results}} \\
+    \cmidrule(l r){2-8} \\
+    \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+    \cmidrule(l r){2-4} \cmidrule(l r){6-8} \\
+    \textbf{Model} & AUC & 95\%-CI & N &  & AUC & 95\%-CI & N \\
+    \cdashline{1-8} \\
+    Single Tree & 0.55 & [0.49,0.6] & 1816 &  & 0.63 & [0.56,0.69] & 1742 \\
+    Bagging & \textbf{ 0.77 } & [0.73,0.81] & 1816 &  & \textbf{ 0.87 } & [0.84,0.9] & 1742 \\
+    Random Forest & \textbf{ 0.79 } & [0.75,0.83] & 1816 &  & \textbf{ 0.88 }  & [0.86,0.91] & 1742 \\
+    \\
+    \multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Specification}} \\
+    \cmidrule(l r){2-8} \\
+    \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+    \cmidrule(l r){2-4}  \cmidrule(l r){6-8} \\
+    \textbf{Parameter} & Single & Bagging & RF &  & Single & Bagging & RF \\
+    \cdashline{1-8} \\
+    B & 1 & 5000 & 5000 &  & 1 & 5000 & 5000 \\
+    $ J_{try} $ & 10 & 10 & 3 &  & 76 & 76 & 9 \\
+    $ J $ &  & 10 &  &  &  & 76 &  \\
+    \# of crises &  & 72 &  &  &  & 70 &  \\
+    \bottomrule
+  \end{tabular}
+  \caption{Table 3 from the code}
+  \label{tab:tab3}
+\end{table}
+
+
+We first need to do data preparation. We follow the same data preparation procedure as Ward (2003). We are, however, only interested in the case where ``many predictors" are used.
+
+```{r}
+data_path = "data"
+df_data  = read.table(paste0(data_path, "/R_class.csv"), sep=",", dec=".",
+                      header=TRUE)
+
+ca = grep("ca", names(df_data), value=T)
+df_data = df_data[!(names(df_data) %in% c(ca))]
+
+# drop vars not used
+stocks = grep("stocks", names(df_data), value=T)
+money = grep("money", names(df_data), value=T)
+stir = grep("stir", names(df_data), value=T)
+assets = grep("assets", names(df_data), value=T)
+i = grep("i_", names(df_data), value=T)
+ri = grep("ri", names(df_data), value=T)
+glo = grep("a_", names(df_data), value=T)
+
+drops = names(df_data) %in% c("year", "ccode", stocks, money, stir, assets, i,
+                              ri, glo)
+full_om = na.omit(cbind(df_data[glo], df_data[!drops]))
+```
+
+Next, we run a LASSO and a Ridge regression model. The function that we use for this is `lasso_ridge_sim`. Using the parameter `alpha`, we can specify whether we want a LASSO regression (`alpha=1`) or a Ridge regression (`alpha=0`).
+
+```{r}
+lasso_ridge_sim = function(data, grid_lambda, alpha=1, num_runs=100){
+
+  aucs = matrix(nrow=1, ncol=num_runs)
+  ci95_lo = matrix(nrow=1, ncol=num_runs)
+  ci95_up = matrix(nrow=1, ncol=num_runs)
+  mses = matrix(nrow=1, ncol=num_runs)
+  
+  for(j in 1:num_runs) {
+    
+    set.seed(j)
+    
+    # Select training and test data
+    train_labels = sample(1:nrow(data), floor(nrow(data)*0.5))
+    train = data[train_labels, ]
+    test = data[-train_labels, ]
+    train_matrix = model.matrix(b2 ~ ., data=train)
+    test_matrix = model.matrix(b2 ~ ., data=test)
+    
+    # Train the LASSO/Ridge model
+    model = glmnet::cv.glmnet(train_matrix, train[, "b2"], alpha=alpha,
+                              lambda=grid_lambda, thresh=1e-12)
+    
+    # Test the LASSO/Ridge model
+    prediction = predict(model, newx=test_matrix, s=model$lambda.min)
+    
+    # ROC analysis
+    r = pROC::roc(test[, "b2"], as.numeric(prediction), ci=T, quiet=T)
+    aucs[1, j] = as.numeric(r$auc)
+    
+    ci95_lo[1, j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[1]
+    ci95_up[1, j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[3]
+    
+    # MSE
+    mses[1, j] = sum((test$b2 - prediction)^2)
+  }
+  
+  auc = as.numeric(colMeans(as.matrix(aucs[1, ])))
+  ci95_lo = as.numeric(colMeans(as.matrix(ci95_lo[1, ])))
+  ci95_up = as.numeric(colMeans(as.matrix(ci95_up[1, ])))
+  mse = as.numeric(colMeans(as.matrix(mses[1, ])))
+  
+  return(list(auc = auc, ci95_lo = ci95_lo, ci95_up = ci95_up, mse = mse))
+}
+
+grid_lambda = 10^seq(2, -3, length=100)
+
+lasso_results = lasso_ridge_sim(full_om, grid_lambda)
+ridge_results = lasso_ridge_sim(full_om, grid_lambda, alpha=0)
+```
+
+These are the results:
+
+```{r}
+model_name = c("LASSO", "Ridge")
+MSE = c(lasso_results$mse, ridge_results$mse)
+AUC = c(lasso_results$auc, ridge_results$auc)
+ci95_lo = c(lasso_results$ci95_lo, ridge_results$ci95_lo)
+ci95_up = c(lasso_results$ci95_up, ridge_results$ci95_up)
+
+df = data.frame(model_name, MSE, AUC, ci95_lo, ci95_up)
+knitr::kable(df)
+```
+
+

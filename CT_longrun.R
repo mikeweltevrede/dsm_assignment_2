@@ -3,8 +3,8 @@
 #####################################################################
 rm(list=ls())
 
-install.packages(c("psych", "graphics", "sandwich", "bbmle", "pROC",
-                   "randomForest", "xtable"))
+# install.packages(c("psych", "graphics", "sandwich", "bbmle", "pROC",
+#                    "randomForest", "xtable"))
 
 library(psych)
 library(graphics)
@@ -19,7 +19,8 @@ library(xtable)
 ###############################################################
 
 data_path = "data"
-df_data  = read.table(paste0(data_path, "/R_class.csv"), sep=",", dec=".", header=TRUE)
+df_data  = read.table(paste0(data_path, "/R_class.csv"), sep=",", dec=".",
+                      header=TRUE)
 
 ca = grep("ca", names(df_data), value=T)
 drops = names(df_data) %in% c(ca)
