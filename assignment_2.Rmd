@@ -1,12 +1,16 @@
 ---
-title: "Data Science Methods - Assignment 2"
-author: "Steffie van Poppel, Robbie Reyerse, Mike Weltevrede (Group 20)"
+title: "Data Science Methods - Homework Assignment 2"
+author: "Group 20: Steffie van Poppel (2031218), Robbie Reyerse (2039047), Mike Weltevrede (1257560)"
 date: "March 21, 2020"
 header-includes:
    - \usepackage{booktabs}
    - \usepackage{arydshln}
    - \usepackage{float}
    - \usepackage{caption}
+   - \usepackage{graphicx}
+   - \usepackage{titling}
+   - \pretitle{\begin{center}\LARGE\includegraphics[width=12cm]{images/TiuLogo.eps}\\[\bigskipamount]}
+   - \posttitle{\end{center}}
 output:
   pdf_document: default
 ---
@@ -17,44 +21,44 @@ rm(list=ls())
 
 library(glmnet)
 library(pROC)
+library(caret)
 library(knitr)
 ```
 
 # Assignment 1
-Here is the table
+In this exercise, we are asked to apply two methods to a dataset on many macroeconomic variables to forecast financial crises. The dataset that we will use was also used by Ward (2017, Journal of Applied Econometrics) where they contrast the performance of one tree with bagging and a random forest against the logit benchmark. We wish to compare our results to those as presented in \ref{tab:resultsward}.
 
 \begin{table}[H]
-  \centering
-  \begin{tabular}{lccccccc}
-    \toprule
-    \multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Results}} \\
-    \cmidrule(l r){2-8} \\
-    \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
-    \cmidrule(l r){2-4} \cmidrule(l r){6-8} \\
-    \textbf{Model} & AUC & 95\%-CI & N &  & AUC & 95\%-CI & N \\
-    \cdashline{1-8} \\
-    Single Tree & 0.55 & [0.49,0.6] & 1816 &  & 0.63 & [0.56,0.69] & 1742 \\
-    Bagging & \textbf{ 0.77 } & [0.73,0.81] & 1816 &  & \textbf{ 0.87 } & [0.84,0.9] & 1742 \\
-    Random Forest & \textbf{ 0.79 } & [0.75,0.83] & 1816 &  & \textbf{ 0.88 }  & [0.86,0.91] & 1742 \\
-    \\
-    \multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Specification}} \\
-    \cmidrule(l r){2-8} \\
-    \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
-    \cmidrule(l r){2-4}  \cmidrule(l r){6-8} \\
-    \textbf{Parameter} & Single & Bagging & RF &  & Single & Bagging & RF \\
-    \cdashline{1-8} \\
-    B & 1 & 5000 & 5000 &  & 1 & 5000 & 5000 \\
-    $ J_{try} $ & 10 & 10 & 3 &  & 76 & 76 & 9 \\
-    $ J $ &  & 10 &  &  &  & 76 &  \\
-    \# of crises &  & 72 &  &  &  & 70 &  \\
-    \bottomrule
-  \end{tabular}
-  \caption{Table 3 from the code}
-  \label{tab:tab3}
+\centering
+\begin{tabular}{lccccccc}
+\toprule
+\multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Results}} \\
+\cmidrule(l r){2-8} \\
+\multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+\cmidrule(l r){2-4} \cmidrule(l r){6-8} \\
+\textbf{Model} & AUC & 95\%-CI & N &  & AUC & 95\%-CI & N \\
+\cdashline{1-8} \\
+Single Tree & 0.55 & [0.49,0.6] & 1816 &  & 0.63 & [0.56,0.69] & 1742 \\
+Bagging & \textbf{ 0.77 } & [0.73,0.81] & 1816 &  & \textbf{ 0.87 } & [0.84,0.9] & 1742 \\
+Random Forest & \textbf{ 0.79 } & [0.75,0.83] & 1816 &  & \textbf{ 0.88 }  & [0.86,0.91] & 1742 \\
+\\
+\multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Specification}} \\
+\cmidrule(l r){2-8} \\
+\multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+\cmidrule(l r){2-4}  \cmidrule(l r){6-8} \\
+\textbf{Parameter} & Single & Bagging & RF &  & Single & Bagging & RF \\
+\cdashline{1-8} \\
+B & 1 & 5000 & 5000 &  & 1 & 5000 & 5000 \\
+$ J_{try} $ & 10 & 10 & 3 &  & 76 & 76 & 9 \\
+$ J $ &  & 10 &  &  &  & 76 &  \\
+\# of crises &  & 72 &  &  &  & 70 &  \\
+\bottomrule
+\end{tabular}
+\caption{Results from Ward (2017).}
+\label{tab:resultsward}
 \end{table}
 
-
-We first need to do data preparation. We follow the same data preparation procedure as Ward (2003). We are, however, only interested in the case where ``many predictors" are used.
+We first need to do data preparation. We follow the same data preparation procedure as Ward. We are, however, only interested in the case where ``many predictors" are used.
 
 ```{r}
 data_path = "data"
@@ -81,12 +85,21 @@ full_om = na.omit(cbind(df_data[glo], df_data[!drops]))
 Next, we run a LASSO and a Ridge regression model. The function that we use for this is `lasso_ridge_sim`. Using the parameter `alpha`, we can specify whether we want a LASSO regression (`alpha=1`) or a Ridge regression (`alpha=0`).
 
 ```{r}
-lasso_ridge_sim = function(data, grid_lambda, alpha=1, num_runs=100){
+lasso_ridge_sim = function(data, grid_lambda = 10^seq(2, -3, length=100),
+                           alpha=1, num_runs=100){
 
-  aucs = matrix(nrow=1, ncol=num_runs)
-  ci95_lo = matrix(nrow=1, ncol=num_runs)
-  ci95_up = matrix(nrow=1, ncol=num_runs)
-  mses = matrix(nrow=1, ncol=num_runs)
+  lambdas = vector("numeric", num_runs)
+  
+  if (alpha==1){
+    nzeros = vector("numeric", num_runs)
+  }
+  
+  auc = vector("numeric", num_runs)
+  ci95_auc_lo = vector("numeric", num_runs)
+  ci95_auc_up = vector("numeric", num_runs)
+  precisions = vector("numeric", num_runs)
+  recalls = vector("numeric", num_runs)
+  f_measures = vector("numeric", num_runs)
   
   for(j in 1:num_runs) {
     
@@ -101,47 +114,100 @@ lasso_ridge_sim = function(data, grid_lambda, alpha=1, num_runs=100){
     
     # Train the LASSO/Ridge model
     model = glmnet::cv.glmnet(train_matrix, train[, "b2"], alpha=alpha,
-                              lambda=grid_lambda, thresh=1e-12)
+                              lambda=grid_lambda, thresh=1e-12,
+                              family="binomial")
+    
+    lambdas[j] = model$lambda.1se
+    
+    if (alpha==1){
+      nzeros[j] = model$nzero[[which(model$lambda == model$lambda.1se)]]
+    }
     
     # Test the LASSO/Ridge model
-    prediction = predict(model, newx=test_matrix, s=model$lambda.min)
+    prediction = predict(model, newx=test_matrix, s=model$lambda.1se,
+                         type ="class")
     
     # ROC analysis
     r = pROC::roc(test[, "b2"], as.numeric(prediction), ci=T, quiet=T)
-    aucs[1, j] = as.numeric(r$auc)
+    auc[j] = as.numeric(r$auc)
     
-    ci95_lo[1, j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[1]
-    ci95_up[1, j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[3]
+    ci95_auc_lo[j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[1]
+    ci95_auc_up[j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[3]
     
-    # MSE
-    mses[1, j] = sum((test$b2 - prediction)^2)
+    # Classification evaluation methods
+    precisions[j] = caret::precision(factor(prediction, levels=c(0,1)),
+                                     factor(test$b2, levels=c(0,1)))
+    recalls[j] = caret::recall(factor(prediction, levels=c(0,1)),
+                               factor(test$b2, levels=c(0,1)))
+    f_measures[j] = caret::F_meas(factor(prediction, levels=c(0,1)),
+                                  factor(test$b2, levels=c(0,1)))
   }
   
-  auc = as.numeric(colMeans(as.matrix(aucs[1, ])))
-  ci95_lo = as.numeric(colMeans(as.matrix(ci95_lo[1, ])))
-  ci95_up = as.numeric(colMeans(as.matrix(ci95_up[1, ])))
-  mse = as.numeric(colMeans(as.matrix(mses[1, ])))
+  results = list(auc = mean(auc),
+                 ci95_auc_lo = mean(ci95_auc_lo),
+                 ci95_auc_up = mean(ci95_auc_up),
+                 precision = mean(precisions),
+                 ci95_precision_lo = mean(precisions) - qnorm(0.975)*
+                   sd(precisions) / sqrt(nrow(test_matrix)),
+                 ci95_precision_up = mean(precisions) + qnorm(0.975)*
+                   sd(precisions) / sqrt(nrow(test_matrix)),
+                 recall = mean(recalls),
+                 ci95_recall_lo = mean(recalls) - qnorm(0.975)*sd(recalls) / 
+                   sqrt(nrow(test_matrix)),
+                 ci95_recall_up = mean(recalls) + qnorm(0.975)*sd(recalls) /
+                   sqrt(nrow(test_matrix)),
+                 f_measure = mean(f_measures),
+                 ci95_f_measure_lo = mean(f_measures) - qnorm(0.975)*
+                   sd(f_measures) / sqrt(nrow(test_matrix)),
+                 ci95_f_measure_up = mean(f_measures) + qnorm(0.975)*
+                   sd(f_measures) / sqrt(nrow(test_matrix)),
+                 lambda = mean(lambdas),
+                 ci95_lambdas_lo = mean(lambdas) - qnorm(0.975)*sd(lambdas) /
+                   sqrt(nrow(test_matrix)),
+                 ci95_lambdas_up = mean(lambdas) + qnorm(0.975)*sd(lambdas) /
+                   sqrt(nrow(test_matrix))
+                 )
   
-  return(list(auc = auc, ci95_lo = ci95_lo, ci95_up = ci95_up, mse = mse))
+  if (alpha == 1){
+    results[["nzeros"]] = mean(nzeros)
+    results[["ci95_nzeros_lo"]] = mean(nzeros) - qnorm(0.975)*sd(nzeros) /
+      sqrt(nrow(test_matrix))
+    results[["ci95_nzeros_up"]] = mean(nzeros) + qnorm(0.975)*sd(nzeros) /
+      sqrt(nrow(test_matrix))
+  }
+  
+  return(results)
 }
 
-grid_lambda = 10^seq(2, -3, length=100)
-
-lasso_results = lasso_ridge_sim(full_om, grid_lambda)
-ridge_results = lasso_ridge_sim(full_om, grid_lambda, alpha=0)
+lasso_results = lasso_ridge_sim(full_om)
+ridge_results = lasso_ridge_sim(full_om, alpha=0)
 ```
 
 These are the results:
 
-```{r}
-model_name = c("LASSO", "Ridge")
-MSE = c(lasso_results$mse, ridge_results$mse)
-AUC = c(lasso_results$auc, ridge_results$auc)
-ci95_lo = c(lasso_results$ci95_lo, ridge_results$ci95_lo)
-ci95_up = c(lasso_results$ci95_up, ridge_results$ci95_up)
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lllll}
+        \toprule
+                              & \multicolumn{4}{c}{\textbf{Results}}                                            \\
+                              \cmidrule(l r){2-5}                                                               \\
+        \textbf{Model}        & AUC       & 95\% CI                    & MSE       & 95\% CI                    \\
+        \cdashline{1-5}                                                                                         \\
+        LASSO                 & 0.9896788 & [0.9841623, 0.9951954] & 19.46514  & [19.33736, 19.59292]           \\
+        Ridge                 & 0.9911772 & [0.9850489, 0.9973056] & 20.33910  & [20.19396, 20.48425]           \\
+                              &           &                            &           &                            \\
+                              & \multicolumn{4}{c}{\textbf{Specification}}                                      \\
+                              \cmidrule(l r){2-5}                                                               \\
+        \textbf{Parameter}    & LASSO     & 95\% CI                    & Ridge     & 95\% CI                    \\
+        \cdashline{1-5}                                                                                         \\
+        $\lambda$             & 0.0404002 & [0.0400770, 0.04072332]    & 0.1147967 & [0.1134965, 0.11609682]    \\
+        \# nonzero parameters & 2         & -                          & -         & -                          \\
+        \bottomrule
+    \end{tabular}
+    \caption{Our results}
+    \label{tab:ourresults}
+\end{table}
 
-df = data.frame(model_name, MSE, AUC, ci95_lo, ci95_up)
-knitr::kable(df)
-```
+Firstly, note that there is no confidence interval available for the number of nonzero parameters for the LASSO model. That is because in all runs, we had the same number of nonzero parameters.
 
-
+Discuss why do you think the results you obtain are better or worse than Ward (2017); I am looking for an answer that also includes intuition about the specific data you are analyzing.
