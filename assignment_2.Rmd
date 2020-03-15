@@ -25,8 +25,8 @@ library(caret)
 library(knitr)
 ```
 
-# Assignment 1
-In this exercise, we are asked to apply two methods to a dataset on many macroeconomic variables to forecast financial crises. The dataset that we will use was also used by Ward (2017, Journal of Applied Econometrics) where they contrast the performance of one tree with bagging and a random forest against the logit benchmark. We wish to compare our results to those as presented in \ref{tab:resultsward}.
+# Exercise 1
+In this exercise, we are asked to apply two methods (we choose to apply a LASSO and a ridge regression) to a dataset on many macroeconomic variables to forecast financial crises. The dataset that we will use was also used by Ward (2017, Journal of Applied Econometrics) where they contrast the performance of one tree with bagging and a random forest against the logit benchmark. We wish to compare our results to those as presented in \ref{tab:resultsward}.
 
 \begin{table}[H]
 \centering
@@ -60,7 +60,7 @@ $ J $ &  & 10 &  &  &  & 76 &  \\
 
 We first need to do data preparation. We follow the same data preparation procedure as Ward. We are, however, only interested in the case where ``many predictors" are used.
 
-```{r}
+```{r Data Preparation}
 data_path = "data"
 df_data  = read.table(paste0(data_path, "/R_class.csv"), sep=",", dec=".",
                       header=TRUE)
@@ -82,9 +82,9 @@ drops = names(df_data) %in% c("year", "ccode", stocks, money, stir, assets, i,
 full_om = na.omit(cbind(df_data[glo], df_data[!drops]))
 ```
 
-Next, we run a LASSO and a Ridge regression model. The function that we use for this is `lasso_ridge_sim`. Using the parameter `alpha`, we can specify whether we want a LASSO regression (`alpha=1`) or a Ridge regression (`alpha=0`).
+Next, we run a LASSO and a ridge regression model. The function that we use for this is `lasso_ridge_sim`. Using the parameter `alpha`, we can specify whether we want a LASSO regression (`alpha=1`) or a Ridge regression (`alpha=0`).
 
-```{r}
+```{r Models}
 lasso_ridge_sim = function(data, grid_lambda = 10^seq(2, -3, length=100),
                            alpha=1, num_runs=100){
 
@@ -183,31 +183,103 @@ lasso_results = lasso_ridge_sim(full_om)
 ridge_results = lasso_ridge_sim(full_om, alpha=0)
 ```
 
-These are the results:
+In addition to the AUC used by Ward, we have also added the precision, recall, and F-measure (AKA the F-Score or the F1-Score) to our analysis. These are commonly used evaluation metrics for categorical response variables. Since our variable is binary, these are applicable. We did not use accuracy as a measure since we have only `r table(full_om$b2)[["1"]]` observations where our variable has value 1 compared to `r table(full_om$b2)[["0"]]` observations with value 0. As such, the majority class of zeros will overpower the minority class with value 1.
+
+For completeness sake, these are the definitions of the three metrics:
+
+- $Precision = \frac{\textit{\#True Positives}}{\textit{\#True Positives + \#False Positives}}$, i.e. if we predict a crisis, how often is this true?
+- $Recall = \frac{\textit{\#True Positives}}{\textit{\#True Positives + \#False Negatives}}$, i.e. out of the total number of crises, how many do we correctly identify?
+- $\textit{F-measure} = \frac{2 \times Precision \times Recall}{Precision + Recall}$, i.e. the harmonic mean of the precision and recall scores. This balances the precision and recall measures. It is often used to provide an additional check to values of precision and recall.
+
+Given these definitions, we want a high precision if we want to minimise the number of false positives and a high recall when we want to minimise false negatives. In this case, our intuition would be that we would be most interested in the former. That is, we want to minimise the amount of times that a crisis is coming but that we do not identify this rather than minimising the amount of times where we say that a crisis is coming while this is not true. This is because a crisis can have a grave impact on many people in society and we'd rather take too many precautions than too few. However, the other case is also not desirable; therefore, considering the $F$-measure is also important to consider.
+
+The results from our analysis using the LASSO and ridge regression models can be found in Table \ref{tab:ourresults}.
 
 \begin{table}[H]
-    \centering
-    \begin{tabular}{lllll}
-        \toprule
-                              & \multicolumn{4}{c}{\textbf{Results}}                                            \\
-                              \cmidrule(l r){2-5}                                                               \\
-        \textbf{Model}        & AUC       & 95\% CI                    & MSE       & 95\% CI                    \\
-        \cdashline{1-5}                                                                                         \\
-        LASSO                 & 0.9896788 & [0.9841623, 0.9951954] & 19.46514  & [19.33736, 19.59292]           \\
-        Ridge                 & 0.9911772 & [0.9850489, 0.9973056] & 20.33910  & [20.19396, 20.48425]           \\
-                              &           &                            &           &                            \\
-                              & \multicolumn{4}{c}{\textbf{Specification}}                                      \\
-                              \cmidrule(l r){2-5}                                                               \\
-        \textbf{Parameter}    & LASSO     & 95\% CI                    & Ridge     & 95\% CI                    \\
-        \cdashline{1-5}                                                                                         \\
-        $\lambda$             & 0.0404002 & [0.0400770, 0.04072332]    & 0.1147967 & [0.1134965, 0.11609682]    \\
-        \# nonzero parameters & 2         & -                          & -         & -                          \\
-        \bottomrule
-    \end{tabular}
-    \caption{Our results}
-    \label{tab:ourresults}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+                      & \multicolumn{4}{c}{\textbf{Results}}                                                                                    \\
+\cmidrule(l r){2-5}                                                                                                                             \\
+\textbf{Model}        & \multicolumn{1}{c}{AUC} & \multicolumn{1}{c}{Precision} & \multicolumn{1}{c}{Recall}    & \multicolumn{1}{c}{F-measure} \\
+\cdashline{1-5}                                                                                                                                 \\
+LASSO                 & `r round(lasso_results$auc, 4)` & `r round(lasso_results$precision, 4)` & `r round(lasso_results$recall, 4)` & `r round(lasso_results$f_measure, 4)` \\
+                      & [`r round(lasso_results$ci95_auc_lo, 4)`, `r round(lasso_results$ci95_auc_up, 4)`] & [`r round(lasso_results$ci95_precision_lo, 4)`, `r round(lasso_results$ci95_precision_up, 4)`] & [`r round(lasso_results$ci95_recall_lo, 4)`, `r round(lasso_results$ci95_recall_up, 4)`] & [`r round(lasso_results$ci95_f_measure_lo, 4)`, `r round(lasso_results$ci95_f_measure_up, 4)`] \\
+Ridge                 & `r round(ridge_results$auc, 4)` & `r round(ridge_results$precision, 4)` & `r round(ridge_results$recall, 4)` & `r round(ridge_results$f_measure, 4)` \\
+                      & [`r round(ridge_results$ci95_auc_lo, 4)`, `r round(ridge_results$ci95_auc_up, 4)`] & [`r round(ridge_results$ci95_precision_lo, 4)`, `r round(ridge_results$ci95_precision_up, 4)`] & [`r round(ridge_results$ci95_recall_lo, 4)`, `r round(ridge_results$ci95_recall_up, 4)`] & [`r round(ridge_results$ci95_f_measure_lo, 4)`, `r round(ridge_results$ci95_f_measure_up, 4)`] \\ \\
+                      & \multicolumn{4}{c}{\textbf{Specification}}                                                                              \\
+\cmidrule(l r){2-5}                                                                                                                             \\
+\textbf{Parameter}    & \multicolumn{2}{c}{LASSO}                           & \multicolumn{2}{c}{Ridge}                                         \\
+\cdashline{1-5}                                                                                                                                 \\
+$\lambda$             & \multicolumn{2}{c}{`r round(lasso_results$lambda, 4)`} & \multicolumn{2}{c}{`r round(ridge_results$lambda, 4)`}         \\
+                      & \multicolumn{2}{c}{[`r round(lasso_results$ci95_lambdas_lo, 4)`, `r round(lasso_results$ci95_lambdas_up, 4)`]} & \multicolumn{2}{c}{[`r round(ridge_results$ci95_lambdas_lo, 4)`, `r round(ridge_results$ci95_lambdas_up, 4)`]} \\
+Mean \# nonzero parameters & \multicolumn{2}{c}{`r round(lasso_results$nzeros, 4)`} & \multicolumn{2}{c}{-}                                             \\
+                      & \multicolumn{2}{c}{[`r round(lasso_results$ci95_nzeros_lo, 4)`, `r round(lasso_results$ci95_nzeros_up, 4)`]} & \multicolumn{2}{c}{-}                                             \\
+\bottomrule
+\end{tabular}
+\caption{Our results (Ranges indicate 95\% confidence intervals)}
+\label{tab:ourresults}
 \end{table}
 
-Firstly, note that there is no confidence interval available for the number of nonzero parameters for the LASSO model. That is because in all runs, we had the same number of nonzero parameters.
+Firstly, we will compare our results to that of Ward using the AUC for the ROC curve (hereafter referred to only as the AUC). After this, we will look into the measures of precision, recall, and the $F$-measure. We weigh these off to the AUC measure that Ward uses. Lastly, we look into whether these models actually are applicable to the specific data that we are analysing.
 
-Discuss why do you think the results you obtain are better or worse than Ward (2017); I am looking for an answer that also includes intuition about the specific data you are analyzing.
+To first compare these results with those of Ward, we can only look at the AUC as a quantitative measure since Ward reports no other measures. Ward achieves AUC values of 0.63, 0.87, and 0.88 for the Single Tree, Bagging, and Random Forest methods. Our analyses using LASSO and ridge regression achieve AUC values of `r round(lasso_results$auc, 4)` and `r round(ridge_results$auc, 4)`. Seeing as we want to achieve an AUC value as close to 1 as possible, we can see that the LASSO and ridge regressions perform a bit worse than two of the methods that Ward uses, namely Bagging and Random Forest. However, note that AUC is deemed to not be a good metric in case of imbalance in the response as we have explained before. This is because one can achieve a high AUC when the model can identify the majority class well even though it may be very bad at identifying the minority class. Therefore, we think that it would be better to consider precision, recall, and the $F$-measure.
+
+In that case, we see that the LASSO model achieves the values `r round(lasso_results$precision, 4)`, `r round(lasso_results$recall, 4)`, and `r round(lasso_results$f_measure, 4)` for the precision, recall, and $F$-measure, respectively. The ridge model achieves the values `r round(ridge_results$precision, 4)`, `r round(ridge_results$recall, 4)`, and `r round(ridge_results$f_measure, 4)` for the precision, recall, and $F$-measure, respectively. One can see that the LASSO model has a higher precision while the ridge model achieves a higher recall and $F$-measure. Following our arguments of before, we should value recall a bit more than precision, though this is not set in stone. Therefore, we can also consider the $F$-measure as a balance between the two measures. In that case, the ridge model achieves a slightly higher value for the $F$-measure though not by much.
+
+We would then say that the choice comes to the final part of our analysis: do these models actually fit the data type? It is important to recognise that the LASSO model sets certain parameters to zero and that the ridge model shrinks them to zero. Although we cannot say that the LASSO model sets the correct parameters to zero (in exercise 2 we discuss that another model called adaptive LASSO is able to do this), it seems intuitive that `r ncol(full_om)` variables are likely too many to describe whether a crisis would occur. The problem comes when we look at how many nonzero parameters LASSO selects, namely only 3.55 (on average). It seems unintuitive that only 3 to 4 parameters can accurately predict whether a crisis will occur. Nonetheless, apparently the LASSO model still does well on the basis of our evaluation metrics so it is not that bad. For the ridge model, some parameters are shrunk towards zero but none are set equal to zero (with probability 1). As such, all `r ncol(full_om)` variables are kept in the model but some will have lower coefficients. This makes the model in itself less intuitive to interpret but we are more interested in prediction than estimation so this is not a problem.
+
+All in all, this means that we prefer the ridge model over the LASSO model. Comparing to the models by Ward, we can only use the AUC and our intuition on the applicability of the model to the specific data. On the AUC side, we saw that the AUC values for Ward's models were a bit higher than the LASSO and ridge models. However, also recall that this is not that applicable since the data is imbalanced in the response variable. Therefore, our final conclusion comes to the applicability of the models. Here, we unfortunately do not see a clear reason why we choose one model over the other purely on a theoretical level. As such, we make our conclusion based on the fact that the precision, recall, and $F$-measure values for the ridge regression model are quite high; high enough to choose this model over Ward's Random Forest, for example, as we do not have any information on this method's precision, recall, and $F$-measure.
+
+
+## Exercise 2
+### Plain versus adaptive LASSO
+The objective functions of plain LASSO is shown in equation \eqref{eq:plain lasso}. 
+
+\begin{equation}
+    \min_\beta \Big( RSS + \lambda \sum_{j=1}^p |\beta_j| \Big)
+    \label{eq:plain lasso}
+\end{equation}
+
+Where the first part, the residuals sum of squares is defined in the usual way:
+$$
+RSS=\Big(y_i-\beta_0-\sum_{j=1}^p\beta_jx_{ij}\Big)^2
+$$
+The second part is the LASSO penalty. Where $\lambda$ is the tuning parameter which controls the strength of the penalty. \\
+
+Plain LASSO can be used when we assume $y=X\beta+\epsilon$, where $\epsilon$ is i.i.d and $\beta$ is sparse. The last means that a lot of coefficients should be believed to be zero. This is a reasonable thing to assume if the number of predictors, $p$, grows quickly with $n$. It will then set some of the true zero parameters to zero asymptotically (as $n\xrightarrow{}\infty$). For prediction it is not a problem that not all zero coefficients are set to zero. Since it safeguards that some coefficients will matter for out of sample while maybe in sample they did not in case of finite samples.
+
+In case of prediction $\lambda$ is determined by choosing the lambda is that yields one standard deviation above the minimum cross-validation $\lambda$. If $\lambda=0$ there is no penalization and the plain LASSO solution will be identical to the least squares solution. On the other hand, when $\lambda=\infty$ all penalized coefficients will be zero.
+
+Adaptive LASSO, however, is able to give the all the true zero coefficients. Which is essential for estimation (in sample). The objective of adaptive LASSO is shown in equation \eqref{eq:ad lasso}.
+
+\begin{equation}
+    \min_\beta\Big(RSS+\lambda \sum_{j=1}^p |\beta_j| w_j \Big)
+        \label{eq:ad lasso}
+\end{equation}
+
+where,
+
+\begin{equation}
+    w_j = \frac{1}{|\hat{\beta}_j|^\gamma}~~\text{for}~ \gamma \geq 1
+\label{eq:weight}
+\end{equation}
+
+In fact, when the same assumptions hold as for plain LASSO and in addition $\frac{\lambda_T}{\sqrt{T}}\xrightarrow{}0$ and $\lambda_T^{\frac{\gamma-1}{2}}\xrightarrow{} \infty$ adaptive LASSO selects the true non-zero coefficients with a probability 1 as $n\xrightarrow{}\infty$.
+
+$\hat{\beta}_j\xrightarrow[]{P}\beta_j$ holds for $\hat{\beta}_j$ used in the weight of equation \eqref{eq:weight}, in other words the coefficients pre-estimates converge in probability to the true coefficients.
+
+As can be seen in the objective function of adaptive LASSO, the only difference between the plain LASSO is the penalty. Here, it is weighted with $w_j$ (equation \eqref{eq:weight}). This means that penalization is done proportional to the values of the $\hat{\beta}_j$. So if the pre-estimates are large we penalize less and vise versa. The pre-estimates can be determined by e.g. plain LASSO.\\
+
+In case we are interested in in-sample estimation, $\lambda$ can be chosen by BIC. However, there are still some problems because $\lambda$ is random. In the objective function, $\lambda$ is treated as only changing with the sample size, so it is not random. But then the $\beta$s are nonlinear functions of the random data. There has not yet been a good solution to this.
+
+### Post-adaptive LASSO
+When we are interested in estimation, we are usually interested in the effects of covariates on the dependent variable. Hence there is no need to report zero coefficients unless we want to report parameters that do not have a significant impact on the dependent variable. A main advantage of this is that, when we want to interpret a specific coefficient, we do not have to control for all the covariates for which its coefficient was proven to be zero by adaptive LASSO. When we would directly report the adaptive LASSO results, even though the coefficients were zero, there we had included them in the regression and therefore should be controlled for.
+
+Moreover, although adaptive LASSO will consistently pick all the nonzero coefficients, it is biased in finite samples. For estimation this forms major problems. Post-LASSO estimates have been proven, by Windmeijer et al.\footnote{Windmeijer, F., Farbmacher, H., Davies, N., \& Davey Smith, G. (2019). On the use of the lasso for instrumental variables estimation with some invalid instruments. Journal of the American Statistical Association, 114(527), 1339-1350.}, to be less biased than LASSO estimates reported on its own.
+
+In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., & Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
+
+All in all, for estimation purpose - which are the case when one chooses adaptive LASSO instead of plain LASSO - post-adaptive LASSO will improve interpretation of the coefficients by decreasing the bias and it makes interpretation a lot easier since it is no longer needed to control for the zero coefficients predictors.
+
+## Exercise 3
