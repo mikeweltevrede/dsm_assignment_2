@@ -269,7 +269,7 @@ In fact, when the same assumptions hold as for plain LASSO and in addition $\fra
 
 $\hat{\beta}_j\xrightarrow[]{P}\beta_j$ holds for $\hat{\beta}_j$ used in the weight of equation \eqref{eq:weight}, in other words the coefficients pre-estimates converge in probability to the true coefficients.
 
-As can be seen in the objective function of adaptive LASSO, the only difference between the plain LASSO is the penalty. Here, it is weighted with $w_j$ (equation \eqref{eq:weight}). This means that penalization is done proportional to the values of the $\hat{\beta}_j$. So if the pre-estimates are large we penalize less and vise versa. The pre-estimates can be determined by e.g. plain LASSO.\\
+As can be seen in the objective function of adaptive LASSO, the only difference between the plain LASSO is the penalty. Here, it is weighted with $w_j$ (equation \eqref{eq:weight}). This means that penalization is done proportional to the values of the $\hat{\beta}_j$. So if the pre-estimates are large we penalize less and vise versa. The pre-estimates can be determined by e.g. plain LASSO.
 
 In case we are interested in in-sample estimation, $\lambda$ can be chosen by BIC. However, there are still some problems because $\lambda$ is random. In the objective function, $\lambda$ is treated as only changing with the sample size, so it is not random. But then the $\beta$s are nonlinear functions of the random data. There has not yet been a good solution to this.
 
