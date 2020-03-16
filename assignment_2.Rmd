@@ -233,19 +233,19 @@ All in all, this means that we prefer the ridge model over the LASSO model. Comp
 
 
 ## Exercise 2
-### Plain versus adaptive LASSO
+### a. Plain versus adaptive LASSO
 The objective functions of plain LASSO is shown in equation \eqref{eq:plain lasso}. 
 
 \begin{equation}
-    \min_\beta \Big( RSS + \lambda \sum_{j=1}^p |\beta_j| \Big)
+    \min_\beta \Big( RSS + \lambda \sum_{j=1}^p |\beta_j| \Big),
     \label{eq:plain lasso}
 \end{equation}
 
-Where the first part, the residuals sum of squares is defined in the usual way:
+where the first part, the residuals sum of squares is defined in the usual way:
 $$
 RSS=\Big(y_i-\beta_0-\sum_{j=1}^p\beta_jx_{ij}\Big)^2
 $$
-The second part is the LASSO penalty. Where $\lambda$ is the tuning parameter which controls the strength of the penalty. \\
+The second part is the LASSO penalty, where $\lambda$ is the tuning parameter which controls the strength of the penalty.
 
 Plain LASSO can be used when we assume $y=X\beta+\epsilon$, where $\epsilon$ is i.i.d and $\beta$ is sparse. The last means that a lot of coefficients should be believed to be zero. This is a reasonable thing to assume if the number of predictors, $p$, grows quickly with $n$. It will then set some of the true zero parameters to zero asymptotically (as $n\xrightarrow{}\infty$). For prediction it is not a problem that not all zero coefficients are set to zero. Since it safeguards that some coefficients will matter for out of sample while maybe in sample they did not in case of finite samples.
 
@@ -278,8 +278,24 @@ When we are interested in estimation, we are usually interested in the effects o
 
 Moreover, although adaptive LASSO will consistently pick all the nonzero coefficients, it is biased in finite samples. For estimation this forms major problems. Post-LASSO estimates have been proven, by Windmeijer et al.\footnote{Windmeijer, F., Farbmacher, H., Davies, N., \& Davey Smith, G. (2019). On the use of the lasso for instrumental variables estimation with some invalid instruments. Journal of the American Statistical Association, 114(527), 1339-1350.}, to be less biased than LASSO estimates reported on its own.
 
-In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., & Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
+In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., \& Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
 
 All in all, for estimation purpose - which are the case when one chooses adaptive LASSO instead of plain LASSO - post-adaptive LASSO will improve interpretation of the coefficients by decreasing the bias and it makes interpretation a lot easier since it is no longer needed to control for the zero coefficients predictors.
 
+### b. Post-adaptive LASSO
+
 ## Exercise 3
+### Subquestion a
+
+
+### Subquestion b
+
+
+### Subquestion c
+
+
+### Subquestion d
+
+
+### Subquestion e
+
