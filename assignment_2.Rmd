@@ -25,7 +25,7 @@ library(caret)
 library(knitr)
 ```
 
-# Exercise 1
+# Question 1: Forecasting financial crises
 In this exercise, we are asked to apply two methods (we choose to apply a LASSO and a ridge regression) to a dataset on many macroeconomic variables to forecast financial crises. The dataset that we will use was also used by Ward (2017, Journal of Applied Econometrics) where they contrast the performance of one tree with bagging and a random forest against the logit benchmark. We wish to compare our results to those as presented in Table \ref{tab:resultsward}.
 
 \begin{table}[H]
@@ -231,37 +231,39 @@ We would then say that the choice comes to the final part of our analysis: do th
 
 All in all, this means that we prefer the ridge model over the LASSO model. Comparing to the models by Ward, we can only use the AUC and our intuition on the applicability of the model to the specific data. On the AUC side, we saw that the AUC values for Ward's models were a bit higher than the LASSO and ridge models. However, also recall that this is not that applicable since the data is imbalanced in the response variable. Therefore, our final conclusion comes to the applicability of the models. Here, we unfortunately do not see a clear reason why we choose one model over the other purely on a theoretical level. As such, we make our conclusion based on the fact that the precision, recall, and $F$-measure values for the ridge regression model are quite high (also considering the lower bound of its confidence interval); high enough to choose this model over Ward's Random Forest, for example, as we do not have any information on this method's precision, recall, and $F$-measure.
 
-
-## Exercise 2
-### a. Plain versus adaptive LASSO
+# Question 2: LASSO
+## Subquestion a: Plain versus adaptive LASSO
 The objective functions of plain LASSO is shown in equation \eqref{eq:plain lasso}. 
 
 \begin{equation}
-    \min_\beta \Big( RSS + \lambda \sum_{j=1}^p |\beta_j| \Big),
+    \min_\beta \left( RSS + \lambda \sum_{j=1}^p |\beta_j| \right),
     \label{eq:plain lasso}
 \end{equation}
 
-where the first part, the residuals sum of squares is defined in the usual way:
-$$
-RSS=\Big(y_i-\beta_0-\sum_{j=1}^p\beta_jx_{ij}\Big)^2
-$$
-The second part is the LASSO penalty, where $\lambda$ is the tuning parameter which controls the strength of the penalty.
+where the residual sum of squares $RSS$ is defined in the usual way as in equation \eqref{eq:rss}:
+
+\begin{equation}
+    RSS=\left(y_i-\beta_0-\sum_{j=1}^p\beta_jx_{ij}\right)^2
+    \label{eq:rss}
+\end{equation}
+
+The second part of \eqref{eq:plain lasso} is the LASSO penalty, where $\lambda$ is the tuning parameter which controls the strength of the penalty.
 
 Plain LASSO can be used when we assume $y=X\beta+\epsilon$, where $\epsilon$ is i.i.d and $\beta$ is sparse. The last means that a lot of coefficients should be believed to be zero. This is a reasonable thing to assume if the number of predictors, $p$, grows quickly with $n$. It will then set some of the true zero parameters to zero asymptotically (as $n\xrightarrow{}\infty$). For prediction it is not a problem that not all zero coefficients are set to zero. Since it safeguards that some coefficients will matter for out of sample while maybe in sample they did not in case of finite samples.
 
-In case of prediction $\lambda$ is determined by choosing the lambda is that yields one standard deviation above the minimum cross-validation $\lambda$. If $\lambda=0$ there is no penalization and the plain LASSO solution will be identical to the least squares solution. On the other hand, when $\lambda=\infty$ all penalized coefficients will be zero.
+In case of prediction, $\lambda$ is determined by choosing the lambda is that yields one standard deviation above the minimum cross-validation $\lambda$. If $\lambda=0$ there is no penalization and the plain LASSO solution will be identical to the least squares solution. On the other hand, when $\lambda=\infty$ all penalized coefficients will be zero.
 
-Adaptive LASSO, however, is able to give the all the true zero coefficients. Which is essential for estimation (in sample). The objective of adaptive LASSO is shown in equation \eqref{eq:ad lasso}.
+Adaptive LASSO, however, is able to give the all the true zero coefficients, which is essential for estimation (in-sample). The objective of adaptive LASSO is shown in equation \eqref{eq:ad lasso}.
 
 \begin{equation}
-    \min_\beta\Big(RSS+\lambda \sum_{j=1}^p |\beta_j| w_j \Big)
+    \min_\beta\left(RSS+\lambda \sum_{j=1}^p |\beta_j| w_j \right),
         \label{eq:ad lasso}
 \end{equation}
 
-where,
+where
 
 \begin{equation}
-    w_j = \frac{1}{|\hat{\beta}_j|^\gamma}~~\text{for}~ \gamma \geq 1
+    w_j = \frac{1}{|\hat{\beta}_j|^\gamma}~~\text{for}~ \gamma \geq 1.
 \label{eq:weight}
 \end{equation}
 
@@ -273,29 +275,68 @@ As can be seen in the objective function of adaptive LASSO, the only difference 
 
 In case we are interested in in-sample estimation, $\lambda$ can be chosen by BIC. However, there are still some problems because $\lambda$ is random. In the objective function, $\lambda$ is treated as only changing with the sample size, so it is not random. But then the $\beta$s are nonlinear functions of the random data. There has not yet been a good solution to this.
 
-### Post-adaptive LASSO
-When we are interested in estimation, we are usually interested in the effects of covariates on the dependent variable. Hence there is no need to report zero coefficients unless we want to report parameters that do not have a significant impact on the dependent variable. A main advantage of this is that, when we want to interpret a specific coefficient, we do not have to control for all the covariates for which its coefficient was proven to be zero by adaptive LASSO. When we would directly report the adaptive LASSO results, even though the coefficients were zero, there we had included them in the regression and therefore should be controlled for.
+## Subquestion b: Post-adaptive LASSO
+When we are interested in estimation, we are usually interested in the effects of covariates on the dependent variable. Hence, there is no need to report zero-valued coefficients unless we want to report parameters that do not have a significant impact on the dependent variable. A main advantage of this is that, when we want to interpret a specific coefficient, we do not have to control for all the covariates for which its coefficient was proven to be zero by adaptive LASSO. When we would directly report the adaptive LASSO results, even though the coefficients were zero, there we had included them in the regression and therefore should be controlled for.
 
-Moreover, although adaptive LASSO will consistently pick all the nonzero coefficients, it is biased in finite samples. For estimation this forms major problems. Post-LASSO estimates have been proven, by Windmeijer et al.\footnote{Windmeijer, F., Farbmacher, H., Davies, N., \& Davey Smith, G. (2019). On the use of the lasso for instrumental variables estimation with some invalid instruments. Journal of the American Statistical Association, 114(527), 1339-1350.}, to be less biased than LASSO estimates reported on its own.
+Moreover, although adaptive LASSO will consistently pick all the zero-coefficients, it can still be biased in finite samples. It however aims less estimation biased than plain lass by allowing a relatively higher penalty for zero coefficients and, lower penalty for nonzero coefficients\footnote{Huang, J., Ma, S., \& Zhang, C. H. (2008). Adaptive LASSO for sparse high-dimensional regression models. Statistica Sinica, 1603-1618.}. A bias forms major problems for estimation. Post-lasso estimates have been proven, by Windmeijer et al.\footnote{Windmeijer, F., Farbmacher, H., Davies, N., \& Davey Smith, G. (2019). On the use of the LASSO for instrumental variables estimation with some invalid instruments. Journal of the American Statistical Association, 114(527), 1339-1350.}, to be less biased than LASSO estimates reported on its own. In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., \& Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
 
-In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., \& Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
+All in all, for estimation purpose - which is the case when one chooses adaptive LASSO instead of plain LASSO - post-adaptive LASSO will improve interpretation of the the coefficients by decreasing the bias and it makes interpretation a lot easier since it is no longer needed to control for the zero coefficients predictors.
 
-All in all, for estimation purpose - which are the case when one chooses adaptive LASSO instead of plain LASSO - post-adaptive LASSO will improve interpretation of the coefficients by decreasing the bias and it makes interpretation a lot easier since it is no longer needed to control for the zero coefficients predictors.
+## Question 3: Comparing ridge to OLS
+### Subquestion a: Bias of the ridge estimator
+\begin{align*}
+    E[\hat{\beta}(\lambda)|X] &= E[(X'X + \lambda I_{p})^{-1}X'y|X]\\
+                              &=(X'X + \lambda I_{p})^{-1}X'E[(X\beta + \epsilon)|X]\\
+                              &= (X'X + \lambda I_{p})^{-1}X'X\beta +(X'X + \lambda I_{p})^{-1}X' E[\epsilon|X]\\
+                              &= (X'X + \lambda I_{p})^{-1}X'X\beta + (X'X + \lambda I_{p})^{-1}X' \times 0\\
+                              &= (X'X + \lambda I_{p})^{-1}X'X\beta\\
+                              &= (X'X + \lambda I_{p})^{-1}(X'X + \lambda I_{p} - \lambda I_{p})\beta\\
+                              &= (I_{p} - \lambda(X'X + \lambda I_{p})^{-1})\beta\\
+                              &= \beta - \lambda(X'X + \lambda I_{p})^{-1}\beta\\
+                              \\
+    E[\hat{\beta}(\lambda)|X] - \beta &= \beta - \lambda(X'X + \lambda I_{p})^{-1}\beta - \beta\\
+                                      &= -\lambda(X'X + \lambda I_{p})^{-1}\beta\\
+                                      &= -\lambda W(\lambda)\beta.
+\end{align*}
 
-### b. Post-adaptive LASSO
+### Subquestion b: Efficiency of the ridge estimator
+From the previous exercise, we have that:
+\begin{align*}
+    \hat{\beta_\lambda}          &= (X'X + \lambda I_{p})^{-1}X'X\hat{\beta}\\
+    Var[\hat{\beta_{\lambda}}|X] &= (X'X + \lambda I_{p})^{-1}X'X Var[\hat{\beta}|X][(X'X + \lambda I_{p})X'X]'\\
+                                 &= (X'X + \lambda I_{p})^{-1}X'X Var[\hat{\beta}|X]X'X(X'X + \lambda I_{p})^{-1}\\
+                                 &= (X'X + \lambda I_{p})^{-1}X'X \sigma^{2}(X'X)^{-1}X'X(X'X + \lambda I_{p})^{-1}\\
+                                 &= (X'X + \lambda I_{p})^{-1} (\sigma^{2}X'X)(X'X + \lambda I_{p})^{-1}\\
+                                 &= W(\lambda)(\sigma^{2}X'X)W(\lambda)
+\end{align*}
 
-## Exercise 3
-### Subquestion a
+When $\lambda = 0$ we are left with the OLS estimator. So for $Var(\hat{\beta}(0)|X)-Var(\hat{\beta}(\lambda)|X)$ to be positive definite we need $Var(\hat{\beta}(\lambda)|X)<Var(\hat{\beta}(0)|X)$.
+
+\begin{align*}
+    (X'X)^{-1} - WX'XW &= WW^{-1}(X'X)^{-1}W^{-1}W - WX'XW\\
+    &= W(W^{-1}(X'X)^{-1}W^{-1}-X'X)W\\
+\end{align*}
+
+Now we will simplify the inside of the brackets.
+
+\begin{align*}
+    W^{-1}(X'X)^{-1}W^{-1}-X'X&= (X'X+\lambda I)(X'X)^{-1}(X'X \lambda I) - X'X\\
+    &= X'X(X'X)^{-1}X'X + X'X(X'X)^{-1}\lambda + \lambda(X'X)^{-1}X'X + \lambda^{2}(X'X)^{-1}-X'X\\
+    &= 2\lambda I + \lambda^{2} (X'X)^{-1}\\
+    &= \lambda (2I + \lambda (X'X)^{-1})
+\end{align*}
+
+Since $(X'X)^{-1}$ is invertible it is positive definite. Therefore the whole expression is positive definite. Then we can put the this back into the original expression to get:
+
+\[\lambda W(2I + \lambda (X'X)^{-1})W\]
+
+Which is positive definite, as the expression inside the brackets is also positive definite. Which shows that $Var(\hat{\beta}(0)|X)-Var(\hat{\beta}(\lambda)|X)$ is positive definite, making the ridge estimator more efficient than OLS estimator.
+
+### Subquestion c: Predictive mean-squared error formulation
 
 
-### Subquestion b
+### Subquestion d: The ridge estimator dominates the OLS estimator in PMSE
 
 
-### Subquestion c
-
-
-### Subquestion d
-
-
-### Subquestion e
+### Subquestion e: Convergence
 
