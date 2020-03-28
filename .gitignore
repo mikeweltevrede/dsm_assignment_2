@@ -2,17 +2,18 @@
 .Rhistory
 .RData
 .Ruserdata
-*.aux
-*.html
-*.log
-*.tex
 
 assignment_2_files/
 data/
 images/
 
-handout.pdf
-assignment_2.R
-test.*
+*.aux
+*.html
+*.log
+*.tex
 
+assignment_2.R
+assignment_2_*.pdf
 CT.txt
+handout.pdf
+test.*
