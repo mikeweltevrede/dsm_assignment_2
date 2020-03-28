@@ -12,8 +12,10 @@ images/
 *.log
 *.tex
 
-assignment_2.R
 assignment_2_*.pdf
+test.*
+
+assignment_2.R
 CT.txt
 handout.pdf
-test.*
+SubmittedConfirmation.pdf
