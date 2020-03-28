@@ -3,7 +3,19 @@
 .RData
 .Ruserdata
 
+assignment_2_files/
 data/
 images/
 
+*.aux
+*.html
+*.log
+*.tex
+
+assignment_2_*.pdf
+test.*
+
+assignment_2.R
+CT.txt
 handout.pdf
+SubmittedConfirmation.pdf

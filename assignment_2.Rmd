@@ -1,0 +1,572 @@
+---
+title: "Data Science Methods - Homework Assignment 2"
+author: 'Group 20: Steffie van Poppel (2031218), Robbie Reyerse (2039047), Mike Weltevrede
+  (1257560)'
+date: "March 28, 2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{arydshln}
+- \usepackage{float}
+- \usepackage{caption}
+- \usepackage{graphicx}
+- \usepackage{titling}
+- \usepackage{mathtools}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=12cm]{images/TiuLogo.eps}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+library(glmnet)
+library(pROC)
+library(caret)
+library(knitr)
+```
+
+\newcommand\norm[1]{\left\lVert#1\right\rVert}
+\newcommand\given{\,\middle|\,}
+\newcommand{\E}{\operatorname{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\trace}{\operatorname{tr}}
+\newcommand{\pto}{\overset{p}{\to}}
+\newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}}
+
+# Question 1: Forecasting financial crises
+In this exercise, we are asked to apply two methods (we choose to apply a LASSO and a ridge regression) to a dataset on many macroeconomic variables to forecast financial crises. The dataset that we will use was also used by Ward (2017, Journal of Applied Econometrics) where they contrast the performance of one tree with bagging and a random forest against the logit benchmark. We wish to compare our results to those as presented in Table \ref{tab:resultsward}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccccccc}
+\toprule
+\multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Results}} \\
+\cmidrule(l r){2-8} \\
+\multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+\cmidrule(l r){2-4} \cmidrule(l r){6-8} \\
+\textbf{Model} & AUC & 95\%-CI & N &  & AUC & 95\%-CI & N \\
+\cdashline{1-8} \\
+Single Tree & 0.55 & [0.49,0.6] & 1816 &  & 0.63 & [0.56,0.69] & 1742 \\
+Bagging & \textbf{ 0.77 } & [0.73,0.81] & 1816 &  & \textbf{ 0.87 } & [0.84,0.9] & 1742 \\
+Random Forest & \textbf{ 0.79 } & [0.75,0.83] & 1816 &  & \textbf{ 0.88 }  & [0.86,0.91] & 1742 \\
+\\
+\multicolumn{1}{c}{} & \multicolumn{7}{c}{\textbf{Specification}} \\
+\cmidrule(l r){2-8} \\
+\multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Restricted Selection}} & \multicolumn{1}{c}{} & \multicolumn{3}{c}{\textbf{Many Predictors}} \\
+\cmidrule(l r){2-4}  \cmidrule(l r){6-8} \\
+\textbf{Parameter} & Single & Bagging & RF &  & Single & Bagging & RF \\
+\cdashline{1-8} \\
+B & 1 & 5000 & 5000 &  & 1 & 5000 & 5000 \\
+$ J_{try} $ & 10 & 10 & 3 &  & 76 & 76 & 9 \\
+$ J $ &  & 10 &  &  &  & 76 &  \\
+\# of crises &  & 72 &  &  &  & 70 &  \\
+\bottomrule
+\end{tabular}
+\caption{Results from Ward (2017).}
+\label{tab:resultsward}
+\end{table}
+
+We first need to do data preparation. We follow the same data preparation procedure as Ward. We are, however, only interested in the case where ``many predictors" are used.
+
+```{r Data Preparation}
+data_path = "data"
+df_data  = read.table(paste0(data_path, "/R_class.csv"), sep=",", dec=".",
+                      header=TRUE)
+
+ca = grep("ca", names(df_data), value=T)
+df_data = df_data[!(names(df_data) %in% c(ca))]
+
+# drop vars not used
+stocks = grep("stocks", names(df_data), value=T)
+money = grep("money", names(df_data), value=T)
+stir = grep("stir", names(df_data), value=T)
+assets = grep("assets", names(df_data), value=T)
+i = grep("i_", names(df_data), value=T)
+ri = grep("ri", names(df_data), value=T)
+glo = grep("a_", names(df_data), value=T)
+
+drops = names(df_data) %in% c("year", "ccode", stocks, money, stir, assets, i,
+                              ri, glo)
+full_om = na.omit(cbind(df_data[glo], df_data[!drops]))
+```
+
+Next, we run a LASSO and a ridge regression model. The function that we use for this is `lasso_ridge_sim`. Using the parameter `alpha`, we can specify whether we want a LASSO regression (`alpha=1`) or a Ridge regression (`alpha=0`).
+
+```{r Models}
+lasso_ridge_sim = function(data, grid_lambda = 10^seq(2, -3, length=100),
+                           alpha=1, num_runs=100){
+
+  lambdas = vector("numeric", num_runs)
+  
+  if (alpha==1){
+    nzeros = vector("numeric", num_runs)
+  }
+  
+  auc = vector("numeric", num_runs)
+  ci95_auc_lo = vector("numeric", num_runs)
+  ci95_auc_up = vector("numeric", num_runs)
+  precisions = vector("numeric", num_runs)
+  recalls = vector("numeric", num_runs)
+  f_measures = vector("numeric", num_runs)
+  
+  for(j in 1:num_runs) {
+    
+    set.seed(j)
+    
+    # Select training and test data
+    train_labels = sample(1:nrow(data), floor(nrow(data)*0.5))
+    train = data[train_labels, ]
+    test = data[-train_labels, ]
+    train_matrix = model.matrix(b2 ~ ., data=train)
+    test_matrix = model.matrix(b2 ~ ., data=test)
+    
+    # Train the LASSO/Ridge model
+    model = glmnet::cv.glmnet(train_matrix, train[, "b2"], alpha=alpha,
+                              lambda=grid_lambda, thresh=1e-12,
+                              family="binomial")
+    
+    lambdas[j] = model$lambda.1se
+    
+    if (alpha==1){
+      nzeros[j] = model$nzero[[which(model$lambda == model$lambda.1se)]]
+    }
+    
+    # Test the LASSO/Ridge model
+    prediction = predict(model, newx=test_matrix, s=model$lambda.1se,
+                         type ="class")
+    
+    # ROC analysis
+    r = pROC::roc(test[, "b2"], as.numeric(prediction), ci=T, quiet=T)
+    auc[j] = as.numeric(r$auc)
+    
+    ci95_auc_lo[j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[1]
+    ci95_auc_up[j] = as.numeric(ci.auc(r, conf.level = r$ci[2]))[3]
+    
+    # Classification evaluation methods
+    precisions[j] = caret::precision(factor(prediction, levels=c(0,1)),
+                                     factor(test$b2, levels=c(0,1)))
+    recalls[j] = caret::recall(factor(prediction, levels=c(0,1)),
+                               factor(test$b2, levels=c(0,1)))
+    f_measures[j] = caret::F_meas(factor(prediction, levels=c(0,1)),
+                                  factor(test$b2, levels=c(0,1)))
+  }
+  
+  results = list(auc = mean(auc),
+                 ci95_auc_lo = mean(ci95_auc_lo),
+                 ci95_auc_up = mean(ci95_auc_up),
+                 precision = mean(precisions),
+                 ci95_precision_lo = mean(precisions) - qnorm(0.975)*
+                   sd(precisions) / sqrt(nrow(test_matrix)),
+                 ci95_precision_up = mean(precisions) + qnorm(0.975)*
+                   sd(precisions) / sqrt(nrow(test_matrix)),
+                 recall = mean(recalls),
+                 ci95_recall_lo = mean(recalls) - qnorm(0.975)*sd(recalls) / 
+                   sqrt(nrow(test_matrix)),
+                 ci95_recall_up = mean(recalls) + qnorm(0.975)*sd(recalls) /
+                   sqrt(nrow(test_matrix)),
+                 f_measure = mean(f_measures),
+                 ci95_f_measure_lo = mean(f_measures) - qnorm(0.975)*
+                   sd(f_measures) / sqrt(nrow(test_matrix)),
+                 ci95_f_measure_up = mean(f_measures) + qnorm(0.975)*
+                   sd(f_measures) / sqrt(nrow(test_matrix)),
+                 lambda = mean(lambdas),
+                 ci95_lambdas_lo = mean(lambdas) - qnorm(0.975)*sd(lambdas) /
+                   sqrt(nrow(test_matrix)),
+                 ci95_lambdas_up = mean(lambdas) + qnorm(0.975)*sd(lambdas) /
+                   sqrt(nrow(test_matrix))
+                 )
+  
+  if (alpha == 1){
+    results[["nzeros"]] = mean(nzeros)
+    results[["ci95_nzeros_lo"]] = mean(nzeros) - qnorm(0.975)*sd(nzeros) /
+      sqrt(nrow(test_matrix))
+    results[["ci95_nzeros_up"]] = mean(nzeros) + qnorm(0.975)*sd(nzeros) /
+      sqrt(nrow(test_matrix))
+  }
+  
+  return(results)
+}
+
+lasso_results = lasso_ridge_sim(full_om)
+ridge_results = lasso_ridge_sim(full_om, alpha=0)
+```
+
+In addition to the AUC used by Ward, we have also added the precision, recall, and F-measure (AKA the F-Score or the F1-Score) to our analysis. These are commonly used evaluation metrics for categorical response variables. Since our variable is binary, these are applicable. We did not use accuracy as a measure since we have only `r table(full_om$b2)[["1"]]` observations where our variable has value 1 compared to `r table(full_om$b2)[["0"]]` observations with value 0. As such, the majority class of zeros will overpower the minority class with value 1.
+
+For completeness sake, these are the definitions of the three metrics:
+
+- $Precision = \frac{\textit{\#True Positives}}{\textit{\#True Positives + \#False Positives}}$, i.e. if we predict a crisis, how often is this true?
+- $Recall = \frac{\textit{\#True Positives}}{\textit{\#True Positives + \#False Negatives}}$, i.e. out of the total number of crises, how many do we correctly identify?
+- $\textit{F-measure} = \frac{2 \times Precision \times Recall}{Precision + Recall}$, i.e. the harmonic mean of the precision and recall scores. This balances the precision and recall measures. It is often used to provide an additional check to values of precision and recall.
+
+Given these definitions, we want a high precision if we want to minimise the number of false positives and a high recall when we want to minimise false negatives. In this case, our intuition would be that we would be most interested in the former. That is, we want to minimise the amount of times that a crisis is coming but that we do not identify this rather than minimising the amount of times where we say that a crisis is coming while this is not true. This is because a crisis can have a grave impact on many people in society and we would rather take too many precautions than too few. However, the other case is also not desirable; therefore, the $F$-measure is also important to consider.
+
+The results from our analysis using the LASSO and ridge regression models can be found in Table \ref{tab:ourresults}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+                      & \multicolumn{4}{c}{\textbf{Results}}                                                                                    \\
+\cmidrule(l r){2-5}                                                                                                                             \\
+\textbf{Model}        & \multicolumn{1}{c}{AUC} & \multicolumn{1}{c}{Precision} & \multicolumn{1}{c}{Recall}    & \multicolumn{1}{c}{F-measure} \\
+\cdashline{1-5}                                                                                                                                 \\
+LASSO                 & `r round(lasso_results$auc, 4)` & `r round(lasso_results$precision, 4)` & `r round(lasso_results$recall, 4)` & `r round(lasso_results$f_measure, 4)` \\
+                      & [`r round(lasso_results$ci95_auc_lo, 4)`, `r round(lasso_results$ci95_auc_up, 4)`] & [`r round(lasso_results$ci95_precision_lo, 4)`, `r round(lasso_results$ci95_precision_up, 4)`] & [`r round(lasso_results$ci95_recall_lo, 4)`, `r round(lasso_results$ci95_recall_up, 4)`] & [`r round(lasso_results$ci95_f_measure_lo, 4)`, `r round(lasso_results$ci95_f_measure_up, 4)`] \\
+Ridge                 & `r round(ridge_results$auc, 4)` & `r round(ridge_results$precision, 4)` & `r round(ridge_results$recall, 4)` & `r round(ridge_results$f_measure, 4)` \\
+                      & [`r round(ridge_results$ci95_auc_lo, 4)`, `r round(ridge_results$ci95_auc_up, 4)`] & [`r round(ridge_results$ci95_precision_lo, 4)`, `r round(ridge_results$ci95_precision_up, 4)`] & [`r round(ridge_results$ci95_recall_lo, 4)`, `r round(ridge_results$ci95_recall_up, 4)`] & [`r round(ridge_results$ci95_f_measure_lo, 4)`, `r round(ridge_results$ci95_f_measure_up, 4)`] \\ \\
+                      & \multicolumn{4}{c}{\textbf{Specification}}                                                                              \\
+\cmidrule(l r){2-5}                                                                                                                             \\
+\textbf{Parameter}    & \multicolumn{2}{c}{LASSO}                           & \multicolumn{2}{c}{Ridge}                                         \\
+\cdashline{1-5}                                                                                                                                 \\
+$\lambda$             & \multicolumn{2}{c}{`r round(lasso_results$lambda, 4)`} & \multicolumn{2}{c}{`r round(ridge_results$lambda, 4)`}         \\
+                      & \multicolumn{2}{c}{[`r round(lasso_results$ci95_lambdas_lo, 4)`, `r round(lasso_results$ci95_lambdas_up, 4)`]} & \multicolumn{2}{c}{[`r round(ridge_results$ci95_lambdas_lo, 4)`, `r round(ridge_results$ci95_lambdas_up, 4)`]} \\
+Mean \# nonzero parameters & \multicolumn{2}{c}{`r round(lasso_results$nzeros, 4)`} & \multicolumn{2}{c}{-}                                             \\
+                      & \multicolumn{2}{c}{[`r round(lasso_results$ci95_nzeros_lo, 4)`, `r round(lasso_results$ci95_nzeros_up, 4)`]} & \multicolumn{2}{c}{-}                                             \\
+\bottomrule
+\end{tabular}
+\caption{Our results (Ranges indicate 95\% confidence intervals)}
+\label{tab:ourresults}
+\end{table}
+
+Firstly, we will compare our results to that of Ward using the AUC for the ROC curve (hereafter referred to only as the AUC). After this, we will look into the measures of precision, recall, and the $F$-measure. We weigh these off to the AUC measure that Ward uses. Lastly, we look into whether these models actually are applicable to the specific data that we are analysing.
+
+To first compare our results with those of Ward, we can only look at the AUC as a quantitative measure since Ward reports no other measures. Ward achieves AUC values of 0.63, 0.87, and 0.88 for the Single Tree, Bagging, and Random Forest methods, respectively. Our analyses using LASSO and ridge regression achieve AUC values of `r round(lasso_results$auc, 4)` and `r round(ridge_results$auc, 4)`. Because we want to achieve an AUC value as close to 1 as possible, we can see that the LASSO and ridge regressions perform a bit worse than the Bagging and Random Forest methods used by Ward. However, note that AUC is deemed to not be a good metric in case of imbalance in the response as we have explained before. This is because one can achieve a high AUC when the model can identify the majority class well even though it may be very bad at identifying the minority class. Therefore, we think that it would be better to consider precision, recall, and the $F$-measure.
+
+In that case, we see that the LASSO model achieves the values `r round(lasso_results$precision, 4)`, `r round(lasso_results$recall, 4)`, and `r round(lasso_results$f_measure, 4)` for the precision, recall, and $F$-measure, respectively. The ridge model achieves the values `r round(ridge_results$precision, 4)`, `r round(ridge_results$recall, 4)`, and `r round(ridge_results$f_measure, 4)` for the precision, recall, and $F$-measure, respectively. One can see that the LASSO model has a higher precision while the ridge model achieves a higher recall and $F$-measure. Following our arguments of before, we should value recall a bit more than precision, though this is not set in stone. Therefore, we can also consider the $F$-measure as a balance between the two measures. In that case, the ridge model achieves a slightly higher value for the $F$-measure though not by much. Since the confidence interval of the $F$-measure for the ridge regression does not include the mean $F$-measure for the LASSO regression, it is significantly higher for the ridge regression.
+
+We would then say that the choice comes to the final part of our analysis: do these models actually fit the data type? It is important to recognise that the LASSO model sets certain parameters to zero and that the ridge model shrinks them to zero. Although we cannot say that the LASSO model sets all parameters to zero that are truly zero (in exercise 2 we discuss that another model called adaptive LASSO is able to do this for estimation purposes), it seems intuitive that `r ncol(full_om)` variables are likely too many to describe whether a crisis would occur. The problem comes when we look at how many nonzero parameters LASSO selects, namely only 3.55 (on average). It seems unintuitive that only 3 to 4 parameters can accurately predict whether a crisis will occur. Nonetheless, apparently the LASSO model still does well on the basis of our evaluation metrics so it is not that bad. For the ridge model, some parameters are shrunk towards zero but none are set equal to zero (with probability 1). As such, all `r ncol(full_om)` variables are kept in the model but some will have lower coefficients. This makes the model in itself less intuitive to interpret but we are more interested in prediction than estimation so this is not a problem.
+
+All in all, this means that we prefer the ridge model over the LASSO model. Comparing to the models by Ward, we can only use the AUC and our intuition on the applicability of the model to the specific data. On the AUC side, we saw that the AUC values for Ward's models were a bit higher than the LASSO and ridge models. However, also recall that this is not that applicable since the data is imbalanced in the response variable. Therefore, our final conclusion comes to the applicability of the models. Here, we unfortunately do not see a clear reason why we choose one model over the other purely on a theoretical level. As such, we make our conclusion based on the fact that the precision, recall, and $F$-measure values for the ridge regression model are quite high (also considering the lower bound of its confidence interval); high enough to choose this model over Ward's Random Forest, for example, as we do not have any information on this method's precision, recall, and $F$-measure.
+
+# Question 2: LASSO
+## Subquestion a: Plain versus adaptive LASSO
+The objective functions of plain LASSO is shown in equation \eqref{eq:plain lasso}. 
+
+\begin{equation}
+    \min_\beta \left( RSS + \lambda \sum_{j=1}^p |\beta_j| \right),
+    \label{eq:plain lasso}
+\end{equation}
+
+where the residual sum of squares $RSS$ is defined in the usual way as in equation \eqref{eq:rss}:
+
+\begin{equation}
+    RSS=\left(y_i-\beta_0-\sum_{j=1}^p\beta_jx_{ij}\right)^2
+    \label{eq:rss}
+\end{equation}
+
+The second part of \eqref{eq:plain lasso} is the LASSO penalty, where $\lambda$ is the tuning parameter which controls the strength of the penalty.
+
+Plain LASSO can be used when we assume $y=X\beta+\epsilon$, where $\epsilon$ is i.i.d and $\beta$ is sparse. The last means that a lot of coefficients should be believed to be zero. This is a reasonable thing to assume if the number of predictors, $p$, grows quickly with $n$. It will then set some of the true zero parameters to zero asymptotically (as $n\xrightarrow{}\infty$). For prediction it is not a problem that not all zero coefficients are set to zero. Since it safeguards that some coefficients will matter for out of sample while maybe in sample they did not in case of finite samples.
+
+In case of prediction, $\lambda$ is determined by choosing the lambda is that yields one standard deviation above the minimum cross-validation $\lambda$. If $\lambda=0$ there is no penalization and the plain LASSO solution will be identical to the least squares solution. On the other hand, when $\lambda=\infty$ all penalized coefficients will be zero.
+
+Adaptive LASSO, however, is able to give the all the true zero coefficients, which is essential for estimation (in-sample). The objective of adaptive LASSO is shown in equation \eqref{eq:ad lasso}.
+
+\begin{equation}
+    \min_\beta\left(RSS+\lambda \sum_{j=1}^p |\beta_j| w_j \right),
+        \label{eq:ad lasso}
+\end{equation}
+
+where
+
+\begin{equation}
+    w_j = \frac{1}{|\hat{\beta}_j|^\gamma}~~\text{for}~ \gamma \geq 1.
+\label{eq:weight}
+\end{equation}
+
+In fact, when the same assumptions hold as for plain LASSO and in addition $\frac{\lambda_T}{\sqrt{T}}\xrightarrow{}0$ and $\lambda_T^{\frac{\gamma-1}{2}}\xrightarrow{} \infty$ adaptive LASSO selects the true non-zero coefficients with a probability 1 as $n\xrightarrow{}\infty$.
+
+$\hat{\beta}_j\xrightarrow[]{P}\beta_j$ holds for $\hat{\beta}_j$ used in the weight of equation \eqref{eq:weight}, in other words the coefficients pre-estimates converge in probability to the true coefficients.
+
+As can be seen in the objective function of adaptive LASSO, the only difference between the plain LASSO is the penalty. Here, it is weighted with $w_j$ (equation \eqref{eq:weight}). This means that penalization is done proportional to the values of the $\hat{\beta}_j$. So if the pre-estimates are large we penalize less and vise versa. The pre-estimates can be determined by e.g. plain LASSO.
+
+In case we are interested in in-sample estimation, $\lambda$ can be chosen by BIC. However, there are still some problems because $\lambda$ is random. In the objective function, $\lambda$ is treated as only changing with the sample size, so it is not random. But then the $\beta$s are nonlinear functions of the random data. There has not yet been a good solution to this.
+
+## Subquestion b: Post-adaptive LASSO
+When we are interested in estimation, we are usually interested in the effects of covariates on the dependent variable. Hence, there is no need to report zero-valued coefficients unless we want to report parameters that do not have a significant impact on the dependent variable. A main advantage of this is that, when we want to interpret a specific coefficient, we do not have to control for all the covariates for which its coefficient was proven to be zero by adaptive LASSO. When we would directly report the adaptive LASSO results, even though the coefficients were zero, there we had included them in the regression and therefore should be controlled for.
+
+Moreover, although adaptive LASSO will consistently pick all the zero-coefficients, it can still be biased in finite samples. It however aims less estimation biased than plain lass by allowing a relatively higher penalty for zero coefficients and, lower penalty for nonzero coefficients\footnote{Huang, J., Ma, S., \& Zhang, C. H. (2008). Adaptive LASSO for sparse high-dimensional regression models. Statistica Sinica, 1603-1618.}. A bias forms major problems for estimation. Post-lasso estimates have been proven, by Windmeijer et al.\footnote{Windmeijer, F., Farbmacher, H., Davies, N., \& Davey Smith, G. (2019). On the use of the LASSO for instrumental variables estimation with some invalid instruments. Journal of the American Statistical Association, 114(527), 1339-1350.}, to be less biased than LASSO estimates reported on its own. In addition, Belloni et al.\footnote{Belloni, A., Chernozhukov, V., \& Hansen, C. (2014). Inference on treatment effects after selection among high-dimensional controls. The Review of Economic Studies, 81(2), 608-650.} showed that post-adaptive LASSO can improve inference on the parameter of interest because redundant regressors were penalized away in their procedure.
+
+All in all, for estimation purpose - which is the case when one chooses adaptive LASSO instead of plain LASSO - post-adaptive LASSO will improve interpretation of the the coefficients by decreasing the bias and it makes interpretation a lot easier since it is no longer needed to control for the zero coefficients predictors.
+
+## Question 3: Comparing ridge to OLS
+### Subquestion a: Bias of the ridge estimator
+An estimator is biased when $\E\left[\hat{\tau} \given X\right]\neq \tau$. So first let's have a look at the conditional expectation of the ridge estimator.
+
+$$\begin{aligned}
+    \E\left[\hat{\beta}(\lambda) \given X\right]
+        &= \E\left[\left(X'X + \lambda I_{p}\right)^{-1}X'y \given X\right]\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'\E\left[\left(X\beta + \epsilon\right) \given X\right]\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X\beta +\left(X'X + \lambda I_{p}\right)^{-1}X' \cdot \E\left[\epsilon \given X\right]\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X\beta + \left(X'X + \lambda I_{p}\right)^{-1}X' \cdot 0\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X\beta\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}\left(X'X + \lambda I_{p} - \lambda I_{p}\right)\beta\\
+        &= \left(I_{p} - \lambda\left(X'X + \lambda I_{p}\right)^{-1}\right)\beta\\
+        &= \beta - \lambda\left(X'X + \lambda I_{p}\right)^{-1}\beta
+\end{aligned}$$
+
+To determine the bias we will subtract the true parameter $\beta$:   
+$$\begin{aligned}
+    \E\left[\hat{\beta}\left(\lambda\right)\given X\right] - \beta
+        &= \beta - \lambda\left(X'X + \lambda I_{p}\right)^{-1}\beta - \beta\\
+        &= -\lambda\left(X'X + \lambda I_{p}\right)^{-1}\beta\\
+        &= -\lambda W\left(\lambda\right)\beta
+\end{aligned}$$
+
+Since this is not zero, the ridge estimator is biased.
+
+### Subquestion b: Efficiency of the ridge estimator
+We know the ridge estimator is defined as follows:
+\[\hat{\beta}\left(\lambda\right) = W\left(\lambda\right)X'y\]
+
+When we introduce the identity matrix $I_p=X'X\left(X'X\right)^{-1}$ we get:
+\[\hat{\beta}\left(\lambda\right) = W\left(\lambda\right)X'X\left(X'X\right)^{-1}X'y\]
+
+The OLS estimator is known to be $\hat{\beta}\left(0\right)=\left(X'X\right)^{-1}X'y$. Thus this would result in $\hat{\beta}\left(\lambda\right)$ being:
+\[\hat{\beta}\left(\lambda\right) = W\left(\lambda\right)X'X\hat{\beta}\left(0\right)\]
+
+This can be used to compute the variance of the ridge estimator as we know: \[\Var\left[\hat{\beta}\left(0\right) \given X \right] = \sigma^2\left(X'X\right)^{-1}.\]
+
+$$\begin{aligned}
+    \Var\left[\hat{\beta}\left(\lambda\right) \given X\right]
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X \Var\left[\hat{\beta}\left(0\right) \given X\right]\left[\left(X'X + \lambda I_{p}\right)^{-1}X'X\right]'\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X \Var\left[\hat{\beta}\left(0\right) \given X\right]X'X\left(X'X + \lambda I_{p}\right)^{-1}\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1}X'X \sigma^{2}\left(X'X\right)^{-1}X'X\left(X'X + \lambda I_{p}\right)^{-1}\\
+        &= \left(X'X + \lambda I_{p}\right)^{-1} \left(\sigma^{2}X'X\right)\left(X'X + \lambda I_{p}\right)^{-1}\\
+        &= W\left(\lambda\right)\left(\sigma^{2}X'X\right)W\left(\lambda\right)
+\end{aligned}$$
+
+When $\lambda = 0$ we are left with the OLS estimator. So for $\Var\left(\hat{\beta}\left(0\right) \given X\right)-\Var\left(\hat{\beta}\left(\lambda\right) \given X\right)$ to be positive definite we need \[\Var\left(\hat{\beta}\left(\lambda\right) \given X\right) < \Var\left(\hat{\beta}\left(0\right) \given X\right).\] Let's first calculate $\Var\left(\hat{\beta}\left(0\right) \given X\right) - \Var\left(\hat{\beta}\left(\lambda\right) \given X\right)$.
+
+$$\begin{aligned}
+    \Var\left(\hat{\beta}\left(0\right) \given X\right) - \Var\left(\hat{\beta}\left(\lambda\right) \given X\right)
+        &= \sigma^2(X'X)^{-1} - \sigma^2W(\lambda)X'XW(\lambda)\\
+        &= (X'X)^{-1} - W(\lambda)X'XW(\lambda)\\
+        &= W(\lambda)W(\lambda)^{-1}(X'X)^{-1}W(\lambda)^{-1}W(\lambda) - W(\lambda)X'XW(\lambda)\\
+        &= W(\lambda)(W(\lambda)^{-1}(X'X)^{-1}W(\lambda)^{-1}-X'X)W(\lambda)\\
+\end{aligned}$$
+
+Note that $\sigma^2$ has been left out since it appears in both terms (we can divide both sides of the inequality by $\sigma^2$). Now we will simplify the inside of the brackets.
+
+$$\begin{aligned}
+    W\left(\lambda\right)^{-1}\left(X'X\right)^{-1}W\left(\lambda\right)^{-1}-X'X
+        &= \left(X'X+\lambda I_p\right)\left(X'X\right)^{-1}\left(X'X+ \lambda I_p\right) - X'X\\
+        &= X'X\left(X'X\right)^{-1}X'X + X'X\left(X'X\right)^{-1}\lambda \\
+        &~~~+ \lambda\left(X'X\right)^{-1}X'X + \lambda^{2}\left(X'X\right)^{-1}-X'X\\
+        &= 2\lambda I_p + \lambda^{2} \left(X'X\right)^{-1}\\
+        &= \lambda \left(2I_p + \lambda \left(X'X\right)^{-1}\right)
+\end{aligned}$$
+
+Since $\left(X'X\right)^{-1}$ is invertible it is positive definite. Therefore, the whole expression is positive definite. Then we can put this back into the original expression to get:
+
+\[\lambda W\left(\lambda\right)\left(2I + \lambda \left(X'X\right)^{-1}\right)W\left(\lambda\right)\]
+
+Which is positive definite, as the expression inside the brackets is also positive definite.  Which shows that $\Var\left(\hat{\beta}\left(0\right) \given X\right) - \Var\left(\hat{\beta}\left(\lambda\right) \given X\right)$ is positive definite, making the ridge estimator more efficient than OLS estimator.
+
+### Subquestion c: Predictive mean-squared error formulation
+The aim of this question is to show that 
+\[PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right) = \lambda \cdot \trace \left\{W^2\left(\lambda\right) \cdot \left[2\sigma^2\left(X'X\right) + \lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)\right]\right\}\]
+
+We will begin by joining the two expectations and simply where possible:
+$$\begin{aligned}
+PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right)
+    &= E\left[\norm{X\hat{\beta}(0) - X\beta}^2\given X\right] - E\left[\norm{X\hat{\beta}(\lambda) - X\beta}^2\given X\right] \\
+    &= E\left[\norm{X\hat{\beta}(0) - X\beta}^2 -\norm{X\hat{\beta}(\lambda) - X\beta}^2\given X\right] \\
+    &= E\left[\norm{X\left(\hat{\beta}(0) - \beta\right)}^2 -\norm{X\left(\hat{\beta}(\lambda) - \beta\right)}^2\given X\right] \\
+    &= E\left[\left(\hat{\beta}(0) - \beta\right)'X'X'\left(\hat{\beta}(0) - \beta\right)-\left(\hat{\beta}(\lambda) - \beta\right)'X'X\left(\hat{\beta}(\lambda) - \beta\right) \given X  \right] \\
+    &= E\left[ \left(\hat{\beta}(0) - \beta - \hat{\beta}(\lambda) + \beta \right)'X'X\left(\hat{\beta}(0) - \beta + \hat{\beta}(\lambda) - \beta \right) \given X \right] \\
+        &= E\left[ \left(\hat{\beta}(0) - \hat{\beta}(\lambda) \right)'X'X\left(\hat{\beta}(0) + \hat{\beta}(\lambda) - 2\beta \right) \given X \right]
+\end{aligned}$$
+
+To continue we will first substitute $\hat{\beta}\left(\lambda\right) = W\left(\lambda\right)X'X\hat{\beta}\left(0\right)$ and after that $\hat{\beta}\left(0\right)=\left(X'X\right)^{-1}X'(X\beta+\epsilon)$.
+$$\begin{aligned}
+PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right)
+    &= \E\left[\left(\hat{\beta}\left(0\right)-W\left(\lambda\right)X'X\hat{\beta}\left(0\right)\right)'X'X\left(W\left(\lambda\right)X'X\hat{\beta}\left(0\right)+\hat{\beta}\left(0\right)-2\beta\right)\given X \right] \\
+    &=  \E\bigg[\left(\left(X'X\right)^{-1}X'(X\beta+\epsilon)-W\left(\lambda\right)X'X\left(X'X\right)^{-1}X'(X\beta+\epsilon)\right)'X'X \cdots \\
+    &~~~ \left(W\left(\lambda\right)X'X\left(X'X\right)^{-1}X'(X\beta+\epsilon)+\left(X'X\right)^{-1}X'(X\beta+\epsilon)-2\beta\right) \bigg| X \bigg] \\
+    &= \E\bigg[\left(\beta+\left(X'X\right)^{-1}X'\epsilon-W\left(\lambda\right)X'X\beta-W\left(\lambda\right)X'\epsilon\right)'X'X \cdots \\
+    &~~~ \left(W\left(\lambda\right)X'X\beta+W\left(\lambda\right)X'\epsilon+\beta+\left(X'X\right)^{-1}X'\epsilon)-2\beta\right) \bigg| X \bigg] \\
+    &= \E\bigg[\left(\beta+\left(X'X\right)^{-1}X'\epsilon-W\left(\lambda\right)X'X\beta-W\left(\lambda\right)X'\epsilon\right)'X'X \cdots \\
+    &~~~ \left(W\left(\lambda\right)X'X\beta+W\left(\lambda\right)X'\epsilon+\left(X'X\right)^{-1}X'\epsilon-\beta\right) \bigg| X \bigg]\\
+    & = \beta'X'XW(\lambda)X'X\beta - \beta'X'X\beta \cdots \\
+    &~~~ + \E\left[\epsilon'X(X'X)^{-1}X'XW(\lambda)X'\epsilon \given X\right] + \E\left[\epsilon'X(X'X)^{-1}X'X(X'X)^{-1}\epsilon \given X\right] \cdots \\
+    &~~~ -\beta'X'XW(\lambda)'X'XW(\lambda)X'X\beta+\beta'X'XW(\lambda)'\beta \cdots \\
+    &~~~-E\left[\epsilon'XW(\lambda)'X'X W(\lambda)X'\epsilon \given X\right] -E\left[\epsilon'XW(\lambda)'X'X (X'X)^{-1}X'\epsilon \given X\right] \\
+    &= \beta'X'XW(\lambda)X'X\beta - \beta'X'X\beta + \E\left[\epsilon'XW(\lambda)X'\epsilon \given X\right] + \E\left[\epsilon'X(X'X)^{-1}\epsilon \given X\right] \cdots \\
+    &~~~ -\beta'X'XW(\lambda)'X'XW(\lambda)X'X\beta+\beta'X'XW(\lambda)'\beta \\
+    &~~~ - E\left[\epsilon'XW(\lambda)'X'X W(\lambda)X'\epsilon \given X\right] \cdots \\
+    &~~~ -E\left[\epsilon'XW(\lambda)'X'\epsilon \given X\right]
+\end{aligned}$$
+
+We then take the trace of the entire expression. We also use tr(A+B) = tr(A) + tr(B), as well as tr(E(X)) = E(tr(X)), and tr(AB) = tr(BA)
+$$\begin{aligned}
+    &= \trace\bigg[\beta'X'XW(\lambda)X'X\beta - \beta'X'X\beta + \E\left[\epsilon'XW(\lambda)X'\epsilon \given X\right] + \E\left[\epsilon'X(X'X)^{-1}\epsilon \given X\right] \cdots \\
+    &~~~ -\beta'X'XW(\lambda)'X'XW(\lambda)X'X\beta+\beta'X'XW(\lambda)'\beta-E\left[\epsilon'XW(\lambda)'X'X W(\lambda)X'\epsilon \given X\right] \cdots \\
+    &~~~ -\E\left[\epsilon'XW(\lambda)'X'\epsilon \given X\right]\bigg]\\
+    &= \trace\left[\beta'X'XW(\lambda)X'X\beta\right] - \trace\left[\beta'X'X\beta \right]+ \trace\left[\E\left[\epsilon'XW(\lambda)X'\epsilon \given X\right]\right] + \trace\left[\E\left[\epsilon'X(X'X)^{-1}\epsilon \given X\right]\right] \cdots \\
+    &~~~ -\trace\left[\beta'X'XW(\lambda)'X'XW(\lambda)X'X\beta\right]+\trace\left[\beta'X'XW(\lambda)'\beta\right]-\trace\left[\E\left[\epsilon'XW(\lambda)'X'X W(\lambda)X'\epsilon \given X\right]\right] \cdots \\
+    &~~~ -\trace\left[\E\left[\epsilon'XW(\lambda)'X'\epsilon \given X\right]\right] \\
+    &= \trace\left[\beta'X'XW(\lambda)X'X\beta\right] - \trace\left[\beta'X'X\beta \right]+ [\E\left[\trace\left[\epsilon'XW(\lambda)X'\epsilon \right]\given X\right] + \E\left[\trace\left[\epsilon'X(X'X)^{-1}\epsilon \right]\given X\right] \cdots \\
+    &~~~ -\trace\left[\beta'X'XW(\lambda)'X'XW(\lambda)X'X\beta\right]+\trace\left[\beta'X'XW(\lambda)'\beta\right]-\E\left[\trace\left[\epsilon'XW(\lambda)'X'X W(\lambda)X'\epsilon \right]\given X\right] \cdots \\
+    &~~~ -\E\left[\trace\left[\epsilon'XW(\lambda)'X'\epsilon \right] \given X\right]\\
+    &= \trace\left[\beta\beta'X'XW(\lambda)X'X\right] - \trace\left[\beta\beta'X'X \right]+ [\E\left[\trace\left[\epsilon\epsilon'XW(\lambda)X' \right]\given X\right] + \E\left[\trace\left[\epsilon\epsilon'X(X'X)^{-1} \right]\given X\right] \cdots \\
+    &~~~ -\trace\left[\beta\beta'X'XW(\lambda)'X'XW(\lambda)X'X\right]+\trace\left[\beta\beta'X'XW(\lambda)'\right]-\E\left[\trace\left[\epsilon\epsilon'XW(\lambda)'X'X W(\lambda)X' \right]\given X\right] \cdots \\
+    &~~~ -\E\left[\trace\left[\epsilon\epsilon'XW(\lambda)'X' \right] \given X\right]\\
+    &= \trace\bigg[\beta\beta'X'XW(\lambda)X'X - \beta\beta'X'X + \E\left[\epsilon\epsilon'XW(\lambda)X' \given X\right] + \E\left[\epsilon\epsilon'X(X'X)^{-1} \given X\right] \cdots \\
+    &~~~ -\beta\beta'X'XW(\lambda)'X'XW(\lambda)X'X+\beta\beta'X'XW(\lambda)'-E\left[\epsilon\epsilon'XW(\lambda)'X'X W(\lambda)X' \given X\right] \cdots \\
+    &~~~ -\E\left[\epsilon\epsilon'XW(\lambda)'X' \given X\right]\bigg]\\
+    &= \trace\bigg[\beta\beta'X'XW(\lambda)X'X - \beta\beta'X'X + \sigma^{2}XW(\lambda)X'  + \sigma^{2}X(X'X)^{-1} -\beta\beta'X'XW(\lambda)'X'XW(\lambda)X'X \cdots \\
+    &~~~ +\beta\beta'X'XW(\lambda)'-\sigma^{2}XW(\lambda)'X'X W(\lambda)X' -\sigma^{2}XW(\lambda)'X' \bigg]
+\end{aligned}$$
+
+We know that when we would end up with only a scalar $\tau$, we could apply
+\[E\left[\tau\given X\right] = E\left[tr(\tau) \given X \right] \]
+However, as can be seen above, we were not able to get to this scalar and thus were not able to retrieved the final answer to this question.
+
+We also tried to solve both $PMSE(0|X)$ and $PMSE(\lambda|X)$ separately and see if it gave us any new ideas how to come to the right answer. First, let's take a look at $PMSE(0|X)$:
+$$\begin{aligned}
+    PMSE(0|X) =& E\left[\norm{X\hat{\beta}(0) - X\beta}^2\given X\right]\\
+    =&  E\left[\norm{X\left(\hat{\beta}(0) - \beta\right)}^2\given X\right]\\
+    =&  E\left[\left(\hat{\beta}(0) - \beta\right)'X'X\left(\hat{\beta}(0) - \beta\right)\given X\right]\\
+    =& E\left[\left((X'X)^{-1}X'(X\beta +\epsilon) - \beta\right)'X'X\left((X'X)^{-1}X'(X\beta +\epsilon)) - \beta\right)\given X\right]\\
+     =& E\left[\left((X'X)^{-1}X'\epsilon\right)'X'X(X'X)^{-1}X'\epsilon\given X\right]\\
+     =& E\left[\left((X'X)^{-1}X'\epsilon\right)'X'\epsilon\given X\right]\\
+     =& E\left[\epsilon'X(X'X)^{-1}X'\epsilon\given X\right]\\
+     =& E\left[\epsilon'\epsilon\given X\right]\\
+     =&\sigma^2 I_n
+\end{aligned}$$
+
+And the same was done for $PMSE(\lambda|X)$:
+$$\begin{aligned}
+    PMSE(\lambda|X)  &=  E\left[\left(\hat{\beta}(\lambda) - \beta\right)'X'X\left(\hat{\beta}(\lambda) - \beta\right)\given X\right] \\
+    &= E\left[\left(\hat{\beta}(\lambda) - \beta\right)'X'X\left(\hat{\beta}(\lambda) - \beta\right)\given X\right] \\
+     &= E\left[\hat{\beta}(\lambda)'X'X\hat{\beta}(\lambda)\given X\right] - E\left[\hat{\beta}(\lambda)'X'X\beta\given X\right] - E\left[\beta' X'X\hat{\beta}(\lambda)\given X\right]+E\left[\beta'X'X\beta \given X\right]\\
+    &= E\left[\hat{\beta}(\lambda)'X'X\hat{\beta}(\lambda)\given X\right] - E\left[\hat{\beta}(\lambda)\given X\right]'X'X\beta - \beta' X'XE\left[\hat{\beta}(\lambda)\given X\right]+\beta'X'X\beta\\
+    &= E\left[\left(W\left(\lambda\right)X'X\left(X'X\right)^{-1}X'\left(X\beta-\epsilon\right)\right)'X'XW\left(\lambda\right)X'X\left(X'X\right)^{-1}X'\left(X\beta-\epsilon\right)\given X\right] \cdots \\
+    &~~~- \left(\beta - \lambda W\left(\lambda\right)\beta\right)'X'X\beta - \beta' X'X\left(\beta - \lambda W\left(\lambda\right)\beta\right)+\beta'X'X\beta\\
+    &= E\left[\left(W\left(\lambda\right)X'\left(X\beta-\epsilon\right)\right)'X'XW\left(\lambda\right)X'\left(X\beta-\epsilon\right)\given X\right] \cdots \\
+    &~~~- \left(\beta - \lambda W\left(\lambda\right)\beta\right)'X'X\beta - \beta' X'X\left(\beta - \lambda W\left(\lambda\right)\beta\right)+\beta'X'X\beta\\
+    &= E\left[\left(W\left(\lambda\right)X'\left(X\beta-\epsilon\right)\right)'X'XW\left(\lambda\right)X'\left(X\beta-\epsilon\right)\given X\right] \cdots \\
+    &~~~- \lambda\beta'W(\lambda)'X'X\beta - \beta' X'X\beta + \lambda\beta' X'X W\left(\lambda\right)\beta
+\end{aligned}$$
+
+However, here we also got stuck.
+
+### Subquestion d: The ridge estimator dominates the OLS estimator in PMSE
+For the ridge estimator to dominate the OLS estimator in PMSE, we will need
+\[PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right) >0 \]
+
+In other words this matrix must be positive definite. From the previous question we know that:
+\[PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right) = \lambda \cdot \trace \left\{W^2\left(\lambda\right) \cdot \left[2\sigma^2\left(X'X\right) + \lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)\right]\right\}\]
+ 
+The question indicates that we can assume $\sigma^2I_p-\beta\beta'X'X$ is positive definite. Multiplying this with a scalar $\lambda>0$ will not change this, indicating that the second part of the in-brackets part of the trace $\lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)$ is positive definite. For the first part $2\sigma^2\left(X'X\right)$, we know that $X'X$ is positive semi definite by construction and $2\sigma^2 > 0$, so $2\sigma^2(X'X)$ is still positive semi definite by the same reasoning. We know that adding a positive definite matrix to a semi positive matrix will result in a positive definite matrix. This makes $\left(2\sigma^2\left(X'X\right) + \lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)\right)$ positive definite.
+
+Next we know that if a matrix $A$ and $B$ are both positive definite, their product, $AB$ is also positive definite. So, if we can prove $W^2(\lambda)$ is positive definite, we know that the inside of the trace operator is positive definite. As a result, $trace \left\{W^2\left(\lambda\right) \cdot \left[2\sigma^2\left(X'X\right) + \lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)\right]\right\}>0 $. And since this is only multiplied with the positive scalar $\lambda$, this will finalize our proof.
+
+By the singular value decomposition (SVD) we know that 
+$$\begin{aligned}
+    W(\lambda)^{-1}
+        &=(X'X+\lambda I_p)\\ &= VD^2V'+\lambda I_p \\
+        &= VD^2V'+ \lambda I_p VV' \\
+        &= V \left(D^2+\lambda I_p\right) V'
+\end{aligned}$$
+
+where
+\[ \trace\left\{D^2+\lambda I_p\right\} = \sum_{i=1}^p \left( d_i^2+\lambda \right)\]
+
+Since $d_i^2+\lambda>0$ for all $i$, we have that $\trace\left\{D^2+\lambda I_p\right\}$. This means that $W(\lambda)^{-1}$ is positive definite and therefore so is $W^2(\lambda)$, as all eigenvalues remain positive.
+
+### Subquestion e: Convergence
+We want to show:
+
+\[PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right) \pto
+\begin{cases}
+    0 &\text{for } \alpha \in (0, \frac{1}{2})\\
+    c \coloneqq -a^2\left(\beta'\Sigma^{-1}\beta\right) < 0 & \text{for } \alpha=\frac{1}{2}
+\end{cases}\]
+
+By filling in $\lambda = a n^{\alpha}$ (we assume that $T$ is the sample size $n$ and that there is a typo in the homework question), we get:
+
+$$\begin{aligned}
+    PMSE\left(0 \given X\right) - PMSE\left(\lambda \given X\right)
+        &= \lambda \cdot \trace \left\{W^2\left(\lambda\right) \cdot \left[2\sigma^2\left(X'X\right) + \lambda\left(\sigma^2 I_p - \beta\beta'X'X\right)\right]\right\} \\
+        &= an^{\alpha} \cdot \trace \left\{W^2\left(an^{\alpha}\right) \cdot \left[2\sigma^2\left(X'X\right) + an^{\alpha}\left(\sigma^2 I_p - \beta\beta'X'X\right)\right]\right\}
+\end{aligned}$$
+
+By accordingly multiplying and dividing by $n$ to obtain $n^2W^2\left(an^{\alpha}\right)$ and $X'X/n$, this further elaborates as follows:
+
+$$\begin{aligned}
+~ &= an^{\alpha} \cdot \trace \left\{\frac{1}{n} \cdot n^2 W^2\left(an^{\alpha}\right) \cdot \left[2\sigma^2\left(\frac{X'X}{n}\right) + an^{\alpha}\left(\frac{\sigma^2}{n} I_p - \beta\beta'\frac{X'X}{n}\right)\right]\right\} \\
+&= an^{\alpha-1} \cdot \trace \left\{n^2 W^2\left(an^{\alpha}\right) \cdot \left[2\sigma^2\left(\frac{X'X}{n}\right) + an^{\alpha}\left(\frac{\sigma^2}{n} I_p - \beta\beta'\frac{X'X}{n}\right)\right]\right\}\\
+&= an^{\alpha-1} \cdot \bigg[\trace\left\{ 2\sigma^2n^2W^2\left(an^{\alpha}\right) \left(\frac{X'X}{n}\right) \right\} + \trace\left\{\sigma^2an^{\alpha-1}n^2W^2\left(an^{\alpha}\right)I_p \right\} \\
+&~~~- \trace\left\{an^{\alpha}n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\}\bigg] \\
+&= an^{\alpha-1} \cdot \bigg[2\sigma^2\trace\left\{n^2W^2\left(an^{\alpha}\right) \left(\frac{X'X}{n}\right) \right\} + \sigma^2an^{\alpha-1}\trace\left\{n^2W^2\left(an^{\alpha}\right)I_p \right\} \\
+&~~~- an^{\alpha}\trace\left\{n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\}\bigg]
+\end{aligned}$$
+
+In the last step, we have used that $\trace\{cA\} = c\cdot\trace\{A\}$ for a scalar $c$ and a matrix $A$. By working out the brackets, we obtain the final expression:
+
+$$\begin{aligned}
+~ &= 2\sigma^2an^{\alpha-1} \trace\left\{ n^2W^2\left(an^{\alpha}\right) \left(\frac{X'X}{n}\right) \right\} + \left(an^{\alpha-1}\right)^2\sigma^2\trace\left\{n^2W^2\left(an^{\alpha}\right)I_p\right\} \\
+&~~~ - a^2n^{2\alpha-1}\trace\left\{n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\}  \numberthis \label{eq:full_sum_3.5}
+\end{aligned}$$
+
+Firstly, some observations about probability limits:
+
+\begin{enumerate}[(i)]
+    \item For a constant $c$, the probability limit is the constant itself: $c \pto c$.
+    \item For $m < 0$, we have $n^{m} \pto 0$. Therefore, since $\alpha \leq \frac{1}{2}$: $n^{\alpha-1} \pto 0$.
+\end{enumerate}
+
+We assume that $\frac{X'X}{n} \pto \Sigma$, a positive definite matrix of constants. Moreover,
+\[nW\left(an^{\alpha}\right) = \left(\frac{X'X}{n} + an^{\alpha-1}I_p \right)^{-1}.\]
+
+Since $\frac{X'X}{n} \pto \Sigma$ and (by using (i) and (ii) as stated above) $an^{\alpha-1}I_p \pto 0$ (for $\alpha < 1$, which holds since we consider $\alpha \leq \frac{1}{2}$), we can use Slutsky's rule to determine that $nW\left(an^{\alpha}\right) \pto \Sigma^{-1}$ and that, subsequently, $n^2W^2\left(an^{\alpha}\right) \pto \Sigma^{-2}$. 
+
+To determine the probability limit of \eqref{eq:full_sum_3.5}, we consider its three individual terms:
+
+\begin{enumerate}[(I)]
+    \item $2\sigma^2an^{\alpha-1} \trace\left\{ n^2W^2\left(an^{\alpha}\right) \left(\frac{X'X}{n}\right) \right\}$
+    \item $\left(an^{\alpha-1}\right)^2\sigma^2\trace\left\{n^2W^2\left(an^{\alpha}\right)I_p\right\}$
+    \item $-a^2n^{2\alpha-1}\trace\left\{n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\}$
+\end{enumerate}
+
+By Slutsky's Theorem, the probability limit of a sum is the sum of the probability limits of the individual terms. As such, the probability limit of \eqref{eq:full_sum_3.5} is the sum of the probability limits of (I), (II), and (III). The derivation below for (I) and (II) works for all values of $\alpha$.
+
+\begin{enumerate}[(I)]
+    \item By (i) and (ii), and noticing that the trace is simply a constant when the probability limit has been taken, we have that
+        \[2\sigma^2an^{\alpha-1} \trace\left\{ n^2W^2\left(an^{\alpha}\right) \left(\frac{X'X}{n}\right) \right\} \pto 2\sigma^2a \cdot 0 \cdot \trace\left\{ \Sigma^{-1} \right\} = 0.\]
+    \item By (i) and (ii), noticing that $\left(n^{\alpha-1}\right)^2 \pto 0$ by Slutsky's rule, and once again recognizing the trace as a constant, we have that
+        \[\left(an^{\alpha-1}\right)^2\sigma^2\trace\left\{n^2W^2\left(an^{\alpha}\right)I_p\right\} \pto 0 \cdot \sigma^2 \trace\left\{\Sigma^{-2}I_p\right\} = 0.\]
+    \item For the last term, we recognize two cases, where $\alpha = \frac{1}{2}$ and where $\alpha \in \left(0, \frac{1}{2}\right)$.
+        \begin{itemize}
+            \item $\alpha=\frac{1}{2}:$ Notice that then $n^{2\alpha-1} = n^0 = 1$, so that (III) boils down to:
+                \[-a^2\trace\left\{n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\}.\]
+            Using the assumption that $X'X/n \pto \Sigma$, the probability limit of this expression is:
+                \[-a^2\trace\left\{\Sigma^{-2}\beta\beta'\Sigma \right\}.\]
+            Unfortunately, we were unable to make the step why then $-a^2\trace\left\{\Sigma^{-2}\beta\beta'\Sigma \right\}. = -a^2\beta'\Sigma^{-1}\beta$. Because $\Sigma^{-2}\beta\beta'\Sigma$ is a product of matrices, we cannot simply combine the two $\Sigma$ terms to obtain $\beta\beta'\Sigma^{-1}$. Moreover, even if we could, it is unclear to us how the trace operator vanishes and swaps the order of the matrix $\Sigma^{-1}$ and vectors $\beta$ and $\beta'$.
+             
+            \item $\alpha \in \left(0, \frac{1}{2}\right):$ Here, the argumentation is similar as for (I) and (II): we can apply (ii) and recognize that the trace is simply a constant when the probability limit has been taken to obtain that:
+                \[-a^2n^{2\alpha-1}\trace\left\{n^2W^2\left(an^{\alpha}\right)\beta\beta'\left(\frac{X'X}{n}\right) \right\} \pto -a^2 \cdot 0 \cdot \trace\left\{\Sigma^{-2}\beta\beta'\Sigma \right\} = 0.\]
+        \end{itemize}
+\end{enumerate}
+
+Therefore, assuming that the derivation for $\alpha=\frac{1}{2}$ was successful, we have that:
+$$\begin{aligned}
+    \eqref{eq:full_sum_3.5}
+        &\pto
+            \begin{cases}
+                0 + 0 - a^2\beta'\Sigma^{-1}\beta &\text{for } \alpha = \frac{1}{2} \\
+                0 + 0 - 0 &\text{for } \alpha \in \left(0, \frac{1}{2}\right)
+            \end{cases} \\
+        &=
+            \begin{cases} 
+                -a^2\beta'\Sigma^{-1}\beta &\text{for } \alpha = \frac{1}{2} \\
+                0 &\text{for } \alpha \in \left(0, \frac{1}{2}\right)
+            \end{cases}
+\end{aligned}$$ $\hfill \qed$
